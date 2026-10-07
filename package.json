@@ -10,7 +10,10 @@
     "db:generate": "drizzle-kit generate && node scripts/sync-migration-embed.cjs",
     "db:migrate": "node src/db/migrate-runner.cjs",
     "db:seed": "tsx src/db/run-seed.ts",
-    "test:bootstrap": "tsx tests/production-bootstrap.ts"
+    "test:bootstrap": "tsx tests/production-bootstrap.ts",
+    "test:db": "tsx tests/run-db-tests.ts",
+    "test:e2e": "node tests/server-startup.cjs",
+    "test": "node --test tests/database-url.test.cjs tests/migration-state.test.cjs tests/migration-runner.test.cjs tests/db-module.test.cjs tests/instrumentation.test.cjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -29,6 +32,7 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "drizzle-kit": "0.31.10",
+    "embedded-postgres": "^18.4.0-beta.17",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.6",
     "postcss": "8.5.8",

@@ -33,9 +33,20 @@ const SEED_MARKER = "zavrune_official_seed_v1";
  * Explicit admin/CLI runs can safely resume a legacy partial seed. Automatic
  * bootstrap refuses unmarked nonempty storefronts rather than guessing ownership.
  */
+type LockRow = { acquired: boolean };
+
 export async function seedDatabase({ onlyIfEmpty = false } = {}) {
+  // Read-only fast path: a completed store never opens a lock or a transaction.
+  const [completed] = await db.select().from(settings).where(eq(settings.key, SEED_MARKER)).limit(1);
+  if (completed) return;
+
   return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('zavrune-official-seed-v1'))`);
+    // Non-blocking: concurrent cold instances skip instead of queueing. The
+    // transaction-scoped lock releases even if the connection is recycled.
+    const locked = await tx.execute(
+      sql`select pg_try_advisory_xact_lock(hashtext('zavrune-official-seed-v1')) as acquired`
+    );
+    if ((locked.rows?.[0] as LockRow | undefined)?.acquired !== true) return;
     const [marker] = await tx.select().from(settings).where(eq(settings.key, SEED_MARKER));
     // Completed stores stay untouched even if an owner later removes seed content.
     if (marker) return;

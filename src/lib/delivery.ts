@@ -113,7 +113,14 @@ export function wilayaLabel(code: string, language: "en" | "ar" | "fr" = "en"): 
  * an admin has already edited.
  */
 export async function ensureDeliveryRates(): Promise<void> {
-  const rows = ALGERIA_WILAYAS.map((wilaya, index) => {
+  // Cheap fast path: one indexed read. Complete tables are never rewritten.
+  const existing = await db.select({ wilayaCode: deliveryRates.wilayaCode }).from(deliveryRates);
+  if (existing.length >= ALGERIA_WILAYAS.length) return;
+  const present = new Set(existing.map((row) => row.wilayaCode));
+  const missing = ALGERIA_WILAYAS.filter((wilaya) => !present.has(wilaya.code));
+  if (missing.length === 0) return;
+
+  const rows = missing.map((wilaya) => {
     const [homePrice, deskPrice] = RATE_TABLE[wilaya.code] ?? [null, null];
     return {
       wilayaCode: wilaya.code,
@@ -123,7 +130,8 @@ export async function ensureDeliveryRates(): Promise<void> {
       deskPrice,
       homeEnabled: homePrice !== null,
       deskEnabled: deskPrice !== null,
-      position: index,
+      // Keep the official ordering for rows that are still missing only.
+      position: ALGERIA_WILAYAS.findIndex((entry) => entry.code === wilaya.code),
     };
   });
 

@@ -3,7 +3,7 @@ import {
   ensureDatabaseSchema,
   getDatabaseInitializationError,
 } from "@/db/initialize";
-import { formatDatabaseError } from "@/db/migrate";
+import { formatDatabaseError } from "@/db/errors";
 import { sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";

@@ -40,9 +40,15 @@ export const MANAGED_GROUP_DEFAULTS = [
   },
 ];
 
-/** Idempotent: creates the managed New Drop / Featured groups if missing. */
+/** Idempotent: reads the two managed keys and inserts only what is missing. */
 export async function ensureProductGroups(): Promise<void> {
-  await db.insert(productGroups).values(MANAGED_GROUP_DEFAULTS).onConflictDoNothing({ target: productGroups.key });
+  const keys = MANAGED_GROUP_DEFAULTS.map((group) => group.key);
+  const existing = await db.select({ key: productGroups.key }).from(productGroups).where(inArray(productGroups.key, keys));
+  const present = new Set(existing.map((row) => row.key));
+  const missing = MANAGED_GROUP_DEFAULTS.filter((group) => !present.has(group.key));
+  if (missing.length === 0) return;
+
+  await db.insert(productGroups).values(missing).onConflictDoNothing({ target: productGroups.key });
 }
 
 export async function listProductGroups(): Promise<ProductGroupRecord[]> {

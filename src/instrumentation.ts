@@ -1,12 +1,23 @@
 export async function register() {
-  // Edge cannot open a pg pool. An unset runtime is the Node server.
   if (process.env.NEXT_RUNTIME === "edge") return;
-  // next build loads instrumentation while compiling. Do not connect there.
   if (process.env.NEXT_PHASE === "phase-production-build") return;
-  if (!process.env.DATABASE_URL) return;
+  // Startup is not a schema deployment step. Never import the migration runner.
+  if (process.env.ZAVRUNE_DB_WARMUP !== "1") return;
 
-  // This is an early warm-up only. Database-backed routes also await the same
-  // initializer, so schema readiness never depends solely on instrumentation.
-  const { ensureDatabaseSchema } = await import("./db/initialize");
-  await ensureDatabaseSchema();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const { pool } = await import("./db");
+    await Promise.race([
+      pool.query("select 1"),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("Database warmup deadline exceeded")), 1500);
+      }),
+    ]);
+  } catch {
+    // Includes missing config, failed imports, network/query failures and timeout.
+    // Warmup is optional and must never crash unrelated Next.js routes.
+    console.warn("[db] Optional warmup did not complete; database-backed requests will check readiness.");
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }

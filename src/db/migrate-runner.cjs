@@ -38,47 +38,10 @@ const PAGE_SECTION_COLUMNS = [
 const DESTRUCTIVE_SQL =
   /\b(drop\s+(table|schema|index|constraint|column)|truncate\b|delete\s+from)\b/i;
 
-function stringifyError(value) {
-  if (value instanceof Error) return value.message;
-  return String(value);
-}
-
-function redact(value) {
-  return stringifyError(value)
-    .replace(/postgres(?:ql)?:\/\/[^\s'"`]+/gi, "postgresql://***")
-    .replace(
-      /\b(database_url(?:_unpooled)?|postgres_url_non_pooling|connection_string)\s*=\s*[^\s'"`]+/gi,
-      "$1=***"
-    )
-    .replace(
-      /\b(password|pass|pwd|token|secret)\s*([=:])\s*[^\s&,;'"`]+/gi,
-      "$1$2***"
-    );
-}
-
-function formatDatabaseError(error) {
-  if (!error || typeof error !== "object") {
-    return redact(error || "Unknown database error");
-  }
-
-  const databaseError = error;
-  const parts = [];
-  if (typeof databaseError.code === "string" && databaseError.code) {
-    parts.push(`code ${databaseError.code}`);
-  }
-  for (const key of ["message", "detail", "hint"]) {
-    if (typeof databaseError[key] === "string" && databaseError[key]) {
-      parts.push(databaseError[key]);
-    }
-  }
-
-  return redact(parts.length > 0 ? parts.join(": ") : "Unknown database error");
-}
-
-function environmentValue(environment, name) {
-  const value = environment[name];
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
+const { formatDatabaseError, redact } = require("./errors.cjs");
+const { resolveDatabaseUrl, hasDatabaseUrl, environmentValue } = require("../lib/database-url.cjs");
+// Two small indexed/catalog reads; no locks, DDL, seeds or table probes.
+const { isMigrationStateCurrent } = require("./migration-state.cjs");
 
 /**
  * Converts only an unambiguous Neon pooled endpoint such as
@@ -115,22 +78,18 @@ function resolveMigrationDatabaseUrl(environment = process.env) {
     return { connectionString: nonPooling, source: "POSTGRES_URL_NON_POOLING" };
   }
 
-  const databaseUrl = environmentValue(environment, "DATABASE_URL");
-  if (!databaseUrl) {
-    throw new Error(
-      "DATABASE_URL is required for application queries and schema initialization. Refusing to use a local fallback."
-    );
-  }
+  const application = resolveDatabaseUrl(environment);
+  const databaseUrl = application.connectionString;
 
   const directNeonUrl = deriveDirectNeonUrl(databaseUrl);
   if (directNeonUrl) {
     return {
       connectionString: directNeonUrl,
-      source: "DATABASE_URL (derived Neon direct host)",
+      source: `${application.source} (derived Neon direct host)`,
     };
   }
 
-  return { connectionString: databaseUrl, source: "DATABASE_URL" };
+  return { connectionString: databaseUrl, source: application.source };
 }
 
 function stripSqlComments(sql) {
@@ -261,18 +220,6 @@ function quoteIdent(name) {
   return `"${name}"`;
 }
 
-async function migrationCount(pool) {
-  const exists = await pool.query(
-    `select 1 from information_schema.tables
-     where table_schema = 'drizzle' and table_name = '__drizzle_migrations'`
-  );
-  if (exists.rowCount === 0) return 0;
-  const result = await pool.query(
-    "select count(*)::int as count from drizzle.__drizzle_migrations"
-  );
-  return result.rows[0].count;
-}
-
 async function assertSchema(pool, tables) {
   for (const [table, columns] of Object.entries(tables)) {
     const projection = columns.map(quoteIdent).join(", ");
@@ -292,43 +239,101 @@ async function assertSchema(pool, tables) {
   );
 }
 
-async function applyPendingMigrations() {
-  const migrationDatabase = resolveMigrationDatabaseUrl();
-  const folder = prepareMigrationsFolder();
-  const { tables } = readMigrationSql(folder);
-  const pool = new Pool({
-    connectionString: migrationDatabase.connectionString,
-    max: 1,
-    connectionTimeoutMillis: 20000,
-    query_timeout: 60000,
+const MIGRATION_POOL_OPTIONS = Object.freeze({
+  max: 1,
+  min: 0,
+  connectionTimeoutMillis: 5000,
+  idleTimeoutMillis: 10000,
+  statement_timeout: 25000,
+  query_timeout: 30000,
+  lock_timeout: 5000,
+  keepAlive: true,
+  maxLifetimeSeconds: 120,
+});
+const LOCK_KEY = "zavrune-schema-initialization";
+
+/** Applies the committed migrations on the connection that holds the lock. */
+async function applyMigrationsOnClient(client, folder) {
+  await migrate(drizzle(client), { migrationsFolder: folder });
+}
+
+/** Injectable pool/executor/clock make concurrency and timeout paths testable. */
+async function applyPendingMigrations(options = {}) {
+  const ownsPool = !options.pool;
+  const pool = options.pool ?? new (options.Pool ?? Pool)({
+    ...MIGRATION_POOL_OPTIONS,
+    connectionString: resolveMigrationDatabaseUrl(options.environment).connectionString,
   });
-
-  let client;
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const deadline = now() + (options.waitTimeoutMs ?? 15000);
+  const checkState = options.checkState ?? isMigrationStateCurrent;
+  const log = options.log ?? ((message) => console.log(message));
+  const execute = options.executeMigrations ?? applyMigrationsOnClient;
+  let folder;
+  let tables;
   try {
-    client = await pool.connect();
-    // Multiple Vercel cold starts can reach this code at once. Hold the lock on
-    // the same direct connection used by Drizzle so only one applies migrations.
-    await client.query("select pg_advisory_lock(hashtext($1))", [
-      "zavrune-schema-initialization",
-    ]);
-
-    console.log(`[db] Initializing schema with ${migrationDatabase.source}.`);
-    const before = await migrationCount(client);
-    const db = drizzle(client);
-    await migrate(db, { migrationsFolder: folder });
-    await assertSchema(client, tables);
-    const after = await migrationCount(client);
-    if (after > before) {
-      console.log(
-        `[db] Applied ${after - before} migration(s). Required tables, including page_sections, are present.`
-      );
-    } else {
-      console.log("[db] Database schema already up to date. page_sections is present.");
+    if (await checkState(pool)) {
+      // Deployment/CLI runs stay visible; this path is never used by requests.
+      log("[db] Database schema already up to date. No migrations, locks or DDL were needed.");
+      return;
     }
+    folder = prepareMigrationsFolder();
+    ({ tables } = readMigrationSql(folder));
+    while (now() < deadline) {
+      let client;
+      let locked = false;
+      let destroy = false;
+      try {
+        client = await pool.connect();
+        const result = await client.query("select pg_try_advisory_lock(hashtext($1)) as acquired", [LOCK_KEY]);
+        locked = result.rows[0]?.acquired === true;
+        if (locked) {
+          // Another deployment may have finished between the first read and lock.
+          if (await checkState(client)) return;
+          await execute(client, folder);
+          await assertSchema(client, tables);
+          if (!(await checkState(client))) {
+            throw new Error("Migrations completed but the committed migration state is still missing.");
+          }
+          log("[db] Pending additive migrations applied and schema verified.");
+          return;
+        }
+      } catch (error) {
+        // query_timeout does not cancel server work. Never reuse an uncertain
+        // session (including a try-lock whose result was lost).
+        destroy = true;
+        throw error;
+      } finally {
+        if (client) {
+          if (locked && !destroy) {
+            try {
+              const result = await client.query("select pg_advisory_unlock(hashtext($1)) as released", [LOCK_KEY]);
+              if (result.rows[0]?.released !== true) {
+                destroy = true;
+                throw new Error("Migration advisory lock could not be released safely.");
+              }
+            } catch (error) {
+              destroy = true;
+              client.release(true);
+              client = undefined;
+              throw error;
+            }
+          }
+          client?.release(destroy);
+        }
+      }
+      // Contention never occupies a connection while sleeping. Readiness can
+      // finish without taking the lock as soon as the other deployment commits.
+      if (await checkState(pool)) return;
+      const remaining = deadline - now();
+      if (remaining > 0) await sleep(Math.min(options.pollIntervalMs ?? 250, remaining));
+    }
+    throw new Error("Schema migration is busy. Bounded retry deadline exceeded; retry npm run db:migrate.");
   } finally {
-    // Ending this one-connection pool releases the session-scoped advisory lock.
-    client?.release();
-    await pool.end();
+    if (ownsPool) await pool.end();
+    // Serverless fallback materialization is temporary, never repository data.
+    if (folder && path.dirname(folder) === os.tmpdir()) fs.rmSync(folder, { recursive: true, force: true });
   }
 }
 
@@ -343,15 +348,15 @@ async function cli() {
     process.exit(1);
   }
 
-  if (!environmentValue(process.env, "DATABASE_URL")) {
+  if (!hasDatabaseUrl()) {
     if (ifConfigured) {
       console.warn(
-        "[db] DATABASE_URL is not set, so migrations were not applied during build. Runtime initialization will require DATABASE_URL before serving database-backed pages."
+        "[db] No application database URL configured; build skipped migrations. Database-backed routes fail closed until configured and npm run db:migrate has completed."
       );
       return;
     }
     console.error(
-      "ZAVRUNE_DB_ERROR: DATABASE_URL is required. Configure it outside source control before running migrations."
+      "ZAVRUNE_DB_ERROR: Configure ZAVRUNE_DATABASE_URL, DATABASE_URL or POSTGRES_URL outside source control before running migrations."
     );
     process.exit(1);
   }
@@ -373,6 +378,9 @@ if (require.main === module) {
 
 module.exports = {
   applyPendingMigrations,
+  applyMigrationsOnClient,
+  MIGRATION_POOL_OPTIONS,
+  assertSqlSafe,
   deriveDirectNeonUrl,
   formatDatabaseError,
   redact,
