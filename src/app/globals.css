@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+:root {
+  --bg-primary: #08080A;
+  --bg-surface: #121215;
+  --bg-surface-hover: #1B1B20;
+  --text-primary: #F4F4F5;
+  --text-muted: #9CA3AF;
+  --color-accent: #E2E8F0;
+  --btn-bg: #FFFFFF;
+  --btn-text: #000000;
+  --border-color: rgba(255, 255, 255, 0.12);
+  --radius: 0px;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+@keyframes marquee {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-marquee {
+  display: flex;
+  width: max-content;
+  animation: marquee 25s linear infinite;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Hide scrollbar for clean streetwear horizontal lists */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
