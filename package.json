@@ -3,10 +3,12 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node src/db/migrate-runner.cjs --if-configured --best-effort && next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate && node scripts/sync-migration-embed.cjs",
+    "db:migrate": "node src/db/migrate-runner.cjs"
   },
   "dependencies": {
     "dotenv": "17.3.1",
