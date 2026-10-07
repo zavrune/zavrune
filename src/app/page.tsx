@@ -1,6 +1,7 @@
 import { db } from "@/db";
 import { ensureStorefrontReady, storefrontQuery } from "@/db/initialize";
 import { pageSections, products, categories, navigation } from "@/db/schema";
+import { resolveSectionProducts } from "@/lib/product-groups";
 import { eq, asc, and, isNull } from "drizzle-orm";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
@@ -43,18 +44,31 @@ export default async function HomePage() {
   // Filter visible sections
   const activeSections = sections.filter((s) => s.isVisible);
 
+  // Each section independently chooses its products (auto, manual, New Drop,
+  // Featured, newest...). Resolution happens on the server per section.
+  const resolvedSections = await Promise.all(
+    activeSections.map(async (section) => ({
+      section,
+      products: await resolveSectionProducts(
+        (section.config ?? {}) as any,
+        productsList,
+        Number((section.config as any)?.limit) || 8
+      ),
+    }))
+  );
+
   return (
     <div className="min-h-screen bg-[#08080A] text-zinc-100 font-sans flex flex-col antialiased">
       <Header customNav={navItems as any} />
 
       <main className="flex-1 w-full">
         {activeSections.length > 0 ? (
-          activeSections.map((sec) => (
+          resolvedSections.map(({ section, products: sectionProducts }) => (
             <StorefrontSection
-              key={sec.id}
-              sectionType={sec.sectionType}
-              config={sec.config}
-              productsList={productsList}
+              key={section.id}
+              sectionType={section.sectionType}
+              config={section.config}
+              productsList={sectionProducts}
               categoriesList={categoriesList}
             />
           ))

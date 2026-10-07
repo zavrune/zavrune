@@ -1,4 +1,23 @@
-import { pgTable, text, timestamp, integer, boolean, jsonb, uuid, numeric, pgEnum } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  timestamp,
+  integer,
+  boolean,
+  jsonb,
+  uuid,
+  numeric,
+  pgEnum,
+  customType,
+  primaryKey,
+} from "drizzle-orm/pg-core";
+
+/** Binary column used for media bytes so uploads survive serverless restarts. */
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType() {
+    return "bytea";
+  },
+});
 
 // Admin Accounts
 export const admins = pgTable("admins", {
@@ -8,14 +27,54 @@ export const admins = pgTable("admins", {
   name: text("name").notNull(),
   role: text("role").default("admin").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  // Sessions created before this instant are rejected after a password change.
+  passwordChangedAt: timestamp("password_changed_at").defaultNow().notNull(),
 });
 
 // Admin Sessions
 export const adminSessions = pgTable("admin_sessions", {
   id: uuid("id").defaultRandom().primaryKey(),
   adminId: uuid("admin_id").references(() => admins.id, { onDelete: "cascade" }).notNull(),
+  // SHA-256 of the session cookie value. A database leak cannot be replayed.
   token: text("token").notNull().unique(),
   expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  lastSeenAt: timestamp("last_seen_at").defaultNow().notNull(),
+  userAgent: text("user_agent"),
+  ipHash: text("ip_hash"),
+});
+
+// Login throttling (shared across serverless instances)
+export const adminLoginAttempts = pgTable("admin_login_attempts", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  identifier: text("identifier").notNull().unique(),
+  failedCount: integer("failed_count").default(0).notNull(),
+  firstFailedAt: timestamp("first_failed_at").defaultNow().notNull(),
+  lockedUntil: timestamp("locked_until"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Admin Audit Log
+export const adminAuditLog = pgTable("admin_audit_log", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  adminId: uuid("admin_id").references(() => admins.id, { onDelete: "set null" }),
+  adminEmail: text("admin_email"),
+  action: text("action").notNull(),
+  target: text("target"),
+  detail: jsonb("detail").default({}).notNull(),
+  ipHash: text("ip_hash"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Persistent media bytes (Vercel filesystem is read-only and ephemeral)
+export const mediaObjects = pgTable("media_objects", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  filename: text("filename").notNull(),
+  mimeType: text("mime_type").notNull(),
+  fileSize: integer("file_size").notNull(),
+  checksum: text("checksum").notNull(),
+  bytes: bytea("bytes").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -110,8 +169,34 @@ export const products = pgTable("products", {
   badge: text("badge"), // 'NEW DROP', 'LIMITED', 'ESSENTIAL', 'SALE'
   seoTitle: text("seo_title"),
   seoDescription: text("seo_description"),
+  // Manual catalogue ordering controlled by the admin.
+  position: integer("position").default(0).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Flexible product options: the admin can define arbitrary option types
+// (Size, Color, Material, Fit, Style, ...) with arbitrary values.
+export const productOptionTypes = pgTable("product_option_types", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  productId: uuid("product_id").references(() => products.id, { onDelete: "cascade" }).notNull(),
+  name: text("name").notNull(), // "Size", "Color", "Material", ...
+  slug: text("slug").notNull(),
+  position: integer("position").default(0).notNull(),
+  isEnabled: boolean("is_enabled").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const productOptionValues = pgTable("product_option_values", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  optionTypeId: uuid("option_type_id").references(() => productOptionTypes.id, { onDelete: "cascade" }).notNull(),
+  value: text("value").notNull(),
+  position: integer("position").default(0).notNull(),
+  isEnabled: boolean("is_enabled").default(true).notNull(),
+  colorHex: text("color_hex"),
+  imageUrl: text("image_url"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 // Product Variants
@@ -119,18 +204,35 @@ export const productVariants = pgTable("product_variants", {
   id: uuid("id").defaultRandom().primaryKey(),
   productId: uuid("product_id").references(() => products.id, { onDelete: "cascade" }).notNull(),
   sku: text("sku").notNull(),
-  color: text("color").notNull(), // e.g., "Charcoal Black", "Washed Grey"
+  // Legacy single-axis columns. Still mirrored for Size/Color so existing
+  // storefront and reporting code keeps working with older rows.
+  color: text("color"), // e.g., "Charcoal Black", "Washed Grey"
   colorHex: text("color_hex"), // optional hex code e.g. "#1A1A1A"
-  size: text("size").notNull(), // e.g., "M", "L", "XL"
+  size: text("size"), // e.g., "M", "L", "XL"
+  // Snapshot of every option value in this variant, e.g. { Size: "M", Color: "Black" }
+  optionCombination: jsonb("option_combination").default({}).notNull(),
   price: integer("price"), // if null, uses product base price
   compareAtPrice: integer("compare_at_price"),
   stock: integer("stock").default(0).notNull(),
   reservedStock: integer("reserved_stock").default(0).notNull(),
   imageUrl: text("image_url"),
+  position: integer("position").default(0).notNull(),
   status: text("status").default("active").notNull(), // 'active', 'inactive'
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
+
+// Which option values make up each variant (many-to-many, arbitrary axes)
+export const variantOptionValues = pgTable(
+  "variant_option_values",
+  {
+    variantId: uuid("variant_id").references(() => productVariants.id, { onDelete: "cascade" }).notNull(),
+    optionValueId: uuid("option_value_id").references(() => productOptionValues.id, { onDelete: "cascade" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.variantId, table.optionValueId] }),
+  ]
+);
 
 // Inventory Event Log
 export const inventoryEvents = pgTable("inventory_events", {
@@ -153,6 +255,11 @@ export const media = pgTable("media", {
   width: integer("width"),
   height: integer("height"),
   altText: text("alt_text"),
+  // 'upload' rows point at /api/media/<objectId>; 'url' rows are external links.
+  source: text("source").default("url").notNull(),
+  objectId: uuid("object_id").references(() => mediaObjects.id, { onDelete: "set null" }),
+  folder: text("folder").default("general").notNull(), // product | homepage | category | brand | social | general
+  position: integer("position").default(0).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -250,16 +357,25 @@ export const orders = pgTable("orders", {
   customerPhone: text("customer_phone").notNull(),
   customerEmail: text("customer_email"),
   wilaya: text("wilaya").notNull(),
+  wilayaCode: text("wilaya_code"),
   commune: text("commune").notNull(),
   address: text("address").notNull(),
   postalCode: text("postal_code"),
   deliveryNotes: text("delivery_notes"),
+  // 'home' | 'bureau'
+  deliveryType: text("delivery_type").default("home").notNull(),
+  // Immutable delivery price snapshot: rates may change later without touching
+  // historical orders.
+  deliverySnapshot: jsonb("delivery_snapshot").default({}).notNull(),
   shippingMethodName: text("shipping_method_name").notNull(),
   shippingPrice: integer("shipping_price").default(0).notNull(), // in DZD
   itemsSubtotal: integer("items_subtotal").notNull(), // in DZD
   totalAmount: integer("total_amount").notNull(), // in DZD
   currency: text("currency").default("DZD").notNull(),
   status: text("status").default("Pending").notNull(), // 'Pending', 'Confirmed', 'Processing', 'Shipped', 'Delivered', 'Cancelled', 'Refunded'
+  adminNotes: text("admin_notes"),
+  cancelledAt: timestamp("cancelled_at"),
+  restockedAt: timestamp("restocked_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -272,9 +388,13 @@ export const orderItems = pgTable("order_items", {
   variantId: uuid("variant_id").references(() => productVariants.id, { onDelete: "set null" }),
   productName: text("product_name").notNull(),
   variantSku: text("variant_sku").notNull(),
-  color: text("color").notNull(),
-  size: text("size").notNull(),
+  color: text("color"),
+  size: text("size"),
+  // Immutable option snapshot for arbitrary option axes, e.g. { Material: "Cotton" }
+  options: jsonb("options").default({}).notNull(),
+  optionLabel: text("option_label"),
   unitPrice: integer("unit_price").notNull(), // in DZD
+  compareAtPrice: integer("compare_at_price"),
   quantity: integer("quantity").notNull(),
   totalPrice: integer("total_price").notNull(), // in DZD
   imageUrl: text("image_url"),
@@ -288,4 +408,40 @@ export const orderEvents = pgTable("order_events", {
   note: text("note"),
   createdBy: text("created_by").default("System").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Delivery rates per wilaya (58 wilayas, editable by the admin)
+export const deliveryRates = pgTable("delivery_rates", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  wilayaCode: text("wilaya_code").notNull().unique(), // "01".."58"
+  wilayaNameEn: text("wilaya_name_en").notNull(),
+  wilayaNameAr: text("wilaya_name_ar").notNull(),
+  homePrice: integer("home_price"), // null = unavailable
+  deskPrice: integer("desk_price"), // null = unavailable
+  homeEnabled: boolean("home_enabled").default(true).notNull(),
+  deskEnabled: boolean("desk_enabled").default(true).notNull(),
+  position: integer("position").default(0).notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Managed product collections used by New Drop, Featured and homepage sections.
+export const productGroups = pgTable("product_groups", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  key: text("key").notNull().unique(), // 'new_drop' | 'featured' | custom section keys
+  titleEn: text("title_en"),
+  titleAr: text("title_ar"),
+  titleFr: text("title_fr"),
+  subtitleEn: text("subtitle_en"),
+  subtitleAr: text("subtitle_ar"),
+  subtitleFr: text("subtitle_fr"),
+  isEnabled: boolean("is_enabled").default(true).notNull(),
+  config: jsonb("config").default({}).notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const productGroupItems = pgTable("product_group_items", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  groupKey: text("group_key").notNull(),
+  productId: uuid("product_id").references(() => products.id, { onDelete: "cascade" }).notNull(),
+  position: integer("position").default(0).notNull(),
 });

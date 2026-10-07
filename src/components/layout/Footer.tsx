@@ -1,15 +1,20 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import { useLanguage } from "@/context/LanguageContext";
+import { useStoreSettings } from "@/context/StoreSettingsContext";
 import { ShieldCheck, Truck, RotateCcw, Lock } from "lucide-react";
 
 export function Footer({ customConfig }: { customConfig?: any }) {
   const { language, t, dir } = useLanguage();
+  const settings = useStoreSettings();
+  const socials = settings.socials;
 
-  const brandName = customConfig?.brandName || "ZAVRUNE";
-  const tagline = customConfig?.taglineEn || "PREMIUM URBAN STREETWEAR ARCHITECTURE";
-  const copyrightText = customConfig?.copyrightTextEn || "© 2026 ZAVRUNE. All Rights Reserved. Algerian Dinar (DZD)";
+  const brandName = customConfig?.brandName || settings.storeName;
+  const tagline = customConfig?.taglineEn || settings.tagline || "PREMIUM URBAN STREETWEAR ARCHITECTURE";
+  const copyrightText =
+    customConfig?.copyrightTextEn || `© 2026 ${settings.storeName}. All Rights Reserved. Algerian Dinar (${settings.currency})`;
 
   return (
     <footer className="bg-[#050507] border-t border-white/10 text-zinc-300 font-mono py-12 px-4 sm:px-6 mt-auto" dir={dir}>
@@ -81,27 +86,75 @@ export function Footer({ customConfig }: { customConfig?: any }) {
               Customer Support
             </h4>
             <ul className="space-y-2 text-xs text-zinc-400">
-              <li><a href="/pages/size-guide" className="hover:text-white transition-colors">Size Guide & Fit</a></li>
-              <li><a href="/pages/shipping" className="hover:text-white transition-colors">Shipping & Wilayas Rates</a></li>
-              <li><a href="/pages/contact" className="hover:text-white transition-colors">Direct Contact & WhatsApp</a></li>
-              <li><a href="/pages/faq" className="hover:text-white transition-colors">Frequently Asked Questions</a></li>
+              <li><Link href="/pages/size-guide" className="hover:text-white transition-colors">Size Guide & Fit</Link></li>
+              <li><Link href="/pages/shipping" className="hover:text-white transition-colors">Shipping & Wilayas Rates</Link></li>
+              <li><Link href="/pages/contact" className="hover:text-white transition-colors">Direct Contact & WhatsApp</Link></li>
+              <li><Link href="/pages/faq" className="hover:text-white transition-colors">Frequently Asked Questions</Link></li>
             </ul>
           </div>
 
-          {/* Admin & Info */}
+          {/* Contact & social */}
           <div>
             <h4 className="text-xs font-bold text-white uppercase tracking-wider mb-3">
-              Store Identity
+              Contact
             </h4>
-            <p className="text-xs text-zinc-400 mb-3">
-              ZAVRUNE Algerian Streetwear Architecture. Built for heavy drape and minimal street aesthetics.
-            </p>
-            <a
-              href="/admin"
-              className="inline-block px-3 py-1.5 border border-white/20 text-xs font-bold text-zinc-300 hover:text-white hover:border-white transition-colors uppercase"
-            >
-              Admin Dashboard
-            </a>
+            <ul className="space-y-2 text-xs text-zinc-400">
+              {settings.contactPhone && (
+                <li>
+                  <a href={`tel:${settings.contactPhone}`} className="hover:text-white transition-colors">
+                    {settings.contactPhone}
+                  </a>
+                </li>
+              )}
+              {settings.contactEmail && (
+                <li>
+                  <a href={`mailto:${settings.contactEmail}`} className="hover:text-white transition-colors">
+                    {settings.contactEmail}
+                  </a>
+                </li>
+              )}
+              {settings.contactAddress && <li>{settings.contactAddress}</li>}
+            </ul>
+
+            {(socials.instagram ||
+              socials.tiktok ||
+              socials.facebook ||
+              socials.youtube ||
+              socials.x ||
+              socials.whatsapp) && (
+              <div className="flex flex-wrap gap-3 mt-4 text-[11px] uppercase">
+                {socials.instagram && (
+                  <a href={socials.instagram} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
+                    Instagram
+                  </a>
+                )}
+                {socials.tiktok && (
+                  <a href={socials.tiktok} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
+                    TikTok
+                  </a>
+                )}
+                {socials.facebook && (
+                  <a href={socials.facebook} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
+                    Facebook
+                  </a>
+                )}
+                {socials.youtube && (
+                  <a href={socials.youtube} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
+                    YouTube
+                  </a>
+                )}
+                {socials.x && (
+                  <a href={socials.x} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
+                    X
+                  </a>
+                )}
+                {socials.whatsapp && (
+                  <a href={socials.whatsapp} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
+                    WhatsApp
+                  </a>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useState } from "react";
-import Link from "next/navigation";
+import Link from "next/link";
 import { useLanguage } from "@/context/LanguageContext";
-import { Search, Globe, Menu, X, Shield, ArrowRight } from "lucide-react";
+import { useStoreSettings } from "@/context/StoreSettingsContext";
+import { Search, Globe, Menu, X, ArrowRight } from "lucide-react";
 
 interface NavigationItem {
   id: string;
@@ -15,6 +16,7 @@ interface NavigationItem {
 
 export function Header({ customNav }: { customNav?: NavigationItem[] }) {
   const { language, setLanguage, t, dir } = useLanguage();
+  const settings = useStoreSettings();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -46,6 +48,12 @@ export function Header({ customNav }: { customNav?: NavigationItem[] }) {
 
   return (
     <>
+      {settings.announcementText && (
+        <div className="w-full bg-white text-black text-center font-mono text-[10px] sm:text-xs font-extrabold uppercase tracking-widest py-1.5 px-4">
+          {settings.announcementText}
+        </div>
+      )}
+
       <header className="sticky top-0 z-40 w-full bg-[#08080A]/95 backdrop-blur-md border-b border-white/10 text-white transition-all">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 sm:h-20 flex items-center justify-between gap-4">
           
@@ -59,14 +67,18 @@ export function Header({ customNav }: { customNav?: NavigationItem[] }) {
           </button>
 
           {/* Store Logo */}
-          <a href="/" className="flex items-center gap-2 group shrink-0">
-            <span className="text-2xl sm:text-3xl font-black tracking-widest font-mono text-white group-hover:text-zinc-300 transition-colors uppercase">
-              ZAVRUNE
-            </span>
+          <Link href="/" className="flex items-center gap-2 group shrink-0">
+            {settings.logoUrl ? (
+              <img src={settings.logoUrl} alt={settings.storeName} className="h-8 sm:h-10 w-auto object-contain" />
+            ) : (
+              <span className="text-2xl sm:text-3xl font-black tracking-widest font-mono text-white group-hover:text-zinc-300 transition-colors uppercase">
+                {settings.storeName}
+              </span>
+            )}
             <span className="hidden sm:inline-block text-[9px] font-mono tracking-wider px-1.5 py-0.5 bg-white text-black font-extrabold uppercase">
-              DZD
+              {settings.currency}
             </span>
-          </a>
+          </Link>
 
           {/* Desktop Navigation Links */}
           <nav className="hidden lg:flex items-center gap-8 font-mono text-xs font-bold tracking-widest uppercase">
@@ -141,15 +153,6 @@ export function Header({ customNav }: { customNav?: NavigationItem[] }) {
                 </div>
               )}
             </div>
-
-            {/* Admin Quick Portal Access */}
-            <a
-              href="/admin"
-              className="hidden sm:flex items-center gap-1 px-3 py-1.5 border border-white/20 hover:bg-white hover:text-black font-mono text-xs font-bold transition-all uppercase"
-            >
-              <Shield className="w-3.5 h-3.5" />
-              <span>ADMIN</span>
-            </a>
           </div>
         </div>
 
@@ -246,13 +249,6 @@ export function Header({ customNav }: { customNav?: NavigationItem[] }) {
                   </button>
                 </div>
               </div>
-
-              <a
-                href="/admin"
-                className="w-full py-2.5 bg-zinc-900 border border-white/20 text-center font-mono text-xs font-bold block uppercase"
-              >
-                Admin Dashboard
-              </a>
             </div>
           </div>
         </div>

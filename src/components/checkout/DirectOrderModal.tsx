@@ -23,39 +23,71 @@ export function DirectOrderModal() {
   const [deliveryNotes, setDeliveryNotes] = useState("");
   const [deliveryType, setDeliveryType] = useState<"home" | "bureau">("home");
 
-  const [shippingCost, setShippingCost] = useState(400); // default Algiers home
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
+  // Live delivery pricing + settings come from the server so the checkout can
+  // never drift from Admin → Delivery Settings.
+  const [rates, setRates] = useState<Record<string, { homePrice: number | null; deskPrice: number | null }>>({});
+  const [freeShippingThreshold, setFreeShippingThreshold] = useState<number | null>(null);
+  const [deliveryEnabled, setDeliveryEnabled] = useState(true);
+
   const currentWilaya = ALGERIA_WILAYAS.find((w) => w.code === selectedWilayaCode) || ALGERIA_WILAYAS[15];
 
-  // Reset or update quantity when item changes
-  useEffect(() => {
-    if (item) {
-      setQuantity(item.quantity || 1);
-    }
-  }, [item]);
+  // Reset quantity when a different cart item opens the modal.
+  const itemKey = item ? `${item.productId}:${item.variantId ?? ""}:${item.quantity ?? 1}` : "";
+  const [lastItemKey, setLastItemKey] = useState(itemKey);
+  if (itemKey !== lastItemKey) {
+    setLastItemKey(itemKey);
+    setQuantity(item?.quantity || 1);
+  }
 
-  // Dynamically update shipping cost based on selected Wilaya and Delivery type
+  // Load the admin-curated price list once per mount.
   useEffect(() => {
-    if (selectedWilayaCode === "16") {
-      setShippingCost(deliveryType === "home" ? 400 : 300);
-    } else {
-      setShippingCost(deliveryType === "home" ? 750 : 450);
-    }
-  }, [selectedWilayaCode, deliveryType]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/delivery");
+        const data = await res.json();
+        if (cancelled) return;
+        if (data?.rates) {
+          const map: Record<string, { homePrice: number | null; deskPrice: number | null }> = {};
+          for (const rate of data.rates) {
+            map[rate.wilayaCode] = { homePrice: rate.homePrice, deskPrice: rate.deskPrice };
+          }
+          setRates(map);
+        }
+        setFreeShippingThreshold(data?.freeShippingThreshold ?? null);
+        if (typeof data?.deliveryEnabled === "boolean") setDeliveryEnabled(data.deliveryEnabled);
+      } catch {
+        /* the server re-quotes on submit, so a failed fetch only affects the preview */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  // Set default commune when wilaya changes
-  useEffect(() => {
-    if (currentWilaya.communes.length > 0) {
-      setSelectedCommune(currentWilaya.communes[0]);
-    }
-  }, [selectedWilayaCode, currentWilaya]);
+  // Keep a valid commune selected whenever the wilaya changes.
+  const [lastWilayaCode, setLastWilayaCode] = useState(selectedWilayaCode);
+  if (lastWilayaCode !== selectedWilayaCode) {
+    setLastWilayaCode(selectedWilayaCode);
+    setSelectedCommune(currentWilaya.communes[0] ?? "");
+  }
 
   if (!isOpen || !item) return null;
 
   const unitPrice = item.price;
   const itemsSubtotal = unitPrice * quantity;
+
+  const currentRate = rates[selectedWilayaCode];
+  const homePrice = currentRate?.homePrice ?? null;
+  const deskPrice = currentRate?.deskPrice ?? null;
+  const methodPrice = deliveryType === "home" ? homePrice : deskPrice;
+  const methodEnabled = methodPrice !== null;
+  const freeShipping =
+    freeShippingThreshold !== null && freeShippingThreshold > 0 && itemsSubtotal >= freeShippingThreshold;
+  const shippingCost = freeShipping ? 0 : methodPrice ?? 0;
   const grandTotal = itemsSubtotal + shippingCost;
 
   const getProductName = () => {
@@ -90,7 +122,9 @@ export function DirectOrderModal() {
         customerName: fullName.trim(),
         customerPhone: phone.trim(),
         customerEmail: email.trim() || null,
-        wilaya: language === "ar" ? currentWilaya.nameAr : currentWilaya.nameEn,
+        wilaya: currentWilaya.code,
+        wilayaCode: currentWilaya.code,
+        wilayaName: language === "ar" ? currentWilaya.nameAr : currentWilaya.nameEn,
         commune: selectedCommune,
         address: address.trim(),
         deliveryNotes: deliveryNotes.trim() || null,
@@ -99,6 +133,7 @@ export function DirectOrderModal() {
           {
             productId: item.productId,
             variantId: item.variantId,
+            options: item.options,
             color: item.color,
             size: item.size,
             quantity: quantity,
@@ -315,31 +350,33 @@ export function DirectOrderModal() {
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
+                  disabled={homePrice === null}
                   onClick={() => setDeliveryType("home")}
                   className={`px-3 py-2 border text-left flex items-center justify-between text-xs font-mono transition-all ${
                     deliveryType === "home"
                       ? "bg-white text-black border-white font-bold"
                       : "bg-black text-zinc-400 border-white/20 hover:border-white/40"
-                  }`}
+                  } ${homePrice === null ? "opacity-40 cursor-not-allowed line-through" : ""}`}
                 >
                   <span className="flex items-center gap-1.5">
                     <Truck className="w-3.5 h-3.5" />
                     {t("homeDelivery")}
                   </span>
-                  <span>{selectedWilayaCode === "16" ? "400 دج" : "750 دج"}</span>
+                  <span>{homePrice === null ? "—" : formatDZD(homePrice)}</span>
                 </button>
 
                 <button
                   type="button"
+                  disabled={deskPrice === null}
                   onClick={() => setDeliveryType("bureau")}
                   className={`px-3 py-2 border text-left flex items-center justify-between text-xs font-mono transition-all ${
                     deliveryType === "bureau"
                       ? "bg-white text-black border-white font-bold"
                       : "bg-black text-zinc-400 border-white/20 hover:border-white/40"
-                  }`}
+                  } ${deskPrice === null ? "opacity-40 cursor-not-allowed line-through" : ""}`}
                 >
                   <span>{t("bureauPickup")}</span>
-                  <span>{selectedWilayaCode === "16" ? "300 دج" : "450 دج"}</span>
+                  <span>{deskPrice === null ? "—" : formatDZD(deskPrice)}</span>
                 </button>
               </div>
             </div>

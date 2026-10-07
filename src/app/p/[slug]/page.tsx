@@ -1,7 +1,7 @@
 import { ensureStorefrontReady, storefrontQuery } from "@/db/initialize";
 import { db } from "@/db";
-import { products, productVariants, categories, sizeGuides, sizeGuideMeasurements, navigation } from "@/db/schema";
-import { eq, ne } from "drizzle-orm";
+import { products, productVariants, categories, sizeGuides, sizeGuideMeasurements, navigation, productOptionTypes, productOptionValues } from "@/db/schema";
+import { eq, inArray, ne } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
@@ -35,6 +35,29 @@ export default async function ProductDetailPage({ params }: PDPProps) {
     .select()
     .from(productVariants)
     .where(eq(productVariants.productId, product.id)));
+
+  // 2b. Flexible option types + values for this product
+  const optionTypeRows = await storefrontQuery(db
+    .select()
+    .from(productOptionTypes)
+    .where(eq(productOptionTypes.productId, product.id)));
+
+  const optionTypeIds = optionTypeRows.map((type) => type.id);
+  const optionValueRows = optionTypeIds.length
+    ? await storefrontQuery(db.select().from(productOptionValues).where(inArray(productOptionValues.optionTypeId, optionTypeIds)))
+    : [];
+
+  const optionTypes = optionTypeRows
+    .filter((type) => type.isEnabled)
+    .sort((a, b) => a.position - b.position)
+    .map((type) => ({
+      name: type.name,
+      values: optionValueRows
+        .filter((value) => value.optionTypeId === type.id && value.isEnabled)
+        .sort((a, b) => a.position - b.position)
+        .map((value) => ({ value: value.value, colorHex: value.colorHex, imageUrl: value.imageUrl })),
+    }))
+    .filter((type) => type.values.length > 0);
 
   // 3. Fetch Category
   let categoryName = "";
@@ -91,6 +114,7 @@ export default async function ProductDetailPage({ params }: PDPProps) {
         <ProductDetailView
           product={product as any}
           variants={variants as any}
+          optionTypes={optionTypes}
           categoryName={categoryName}
           sizeGuide={sizeGuideData}
         />

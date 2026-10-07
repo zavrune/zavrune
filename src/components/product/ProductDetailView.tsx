@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useLanguage } from "@/context/LanguageContext";
 import { useDirectOrder } from "@/context/DirectOrderContext";
 import { formatDZD } from "@/lib/translations";
@@ -24,11 +24,20 @@ export interface ProductDetailViewProps {
   };
   variants: {
     id: string;
-    color: string;
-    colorHex?: string;
-    size: string;
+    sku?: string;
+    color?: string | null;
+    colorHex?: string | null;
+    size?: string | null;
     stock: number;
     price?: number | null;
+    compareAtPrice?: number | null;
+    imageUrl?: string | null;
+    status?: string;
+    optionCombination?: Record<string, string> | null;
+  }[];
+  optionTypes?: {
+    name: string;
+    values: { value: string; colorHex?: string | null; imageUrl?: string | null }[];
   }[];
   categoryName?: string;
   sizeGuide?: {
@@ -48,6 +57,7 @@ export interface ProductDetailViewProps {
 export function ProductDetailView({
   product,
   variants = [],
+  optionTypes = [],
   categoryName,
   sizeGuide,
 }: ProductDetailViewProps) {
@@ -55,26 +65,65 @@ export function ProductDetailView({
   const { openDirectOrder } = useDirectOrder();
 
   const [activeImageIndex, setActiveImageIndex] = useState(0);
-  const [selectedColor, setSelectedColor] = useState<string>(
-    variants[0]?.color || product.images[0]?.color || "Default"
-  );
-  const [selectedSize, setSelectedSize] = useState<string>(
-    variants[0]?.size || "M"
-  );
   const [quantity, setQuantity] = useState(1);
   const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
 
-  // Extract unique colors & sizes
-  const uniqueColors = Array.from(new Set(variants.map((v) => v.color)));
-  const uniqueSizes = Array.from(new Set(variants.map((v) => v.size)));
+  const sellableVariants = variants.filter((variant) => (variant.status ?? "active") === "active");
 
-  // Matched Variant
-  const matchedVariant = variants.find(
-    (v) => v.color === selectedColor && v.size === selectedSize
-  ) || variants[0];
+  /** Option axes come from the flexible variant system; legacy rows fall back to colour/size. */
+  const axes = useMemo(() => {
+    const fromProduct = optionTypes.filter((type) => type.values.length > 0);
+    if (fromProduct.length > 0) return fromProduct;
 
-  const currentPrice = matchedVariant?.price || product.price;
-  const currentStock = matchedVariant?.stock ?? 10;
+    const colors = Array.from(new Set(variants.map((variant) => variant.color).filter(Boolean))) as string[];
+    const sizes = Array.from(new Set(variants.map((variant) => variant.size).filter(Boolean))) as string[];
+    const derived: { name: string; values: { value: string; colorHex?: string | null }[] }[] = [];
+    if (colors.length) {
+      derived.push({
+        name: "Color",
+        values: colors.map((value) => ({ value, colorHex: variants.find((variant) => variant.color === value)?.colorHex })),
+      });
+    }
+    if (sizes.length) derived.push({ name: "Size", values: sizes.map((value) => ({ value })) });
+    return derived;
+  }, [optionTypes, variants]);
+
+  const optionsOf = (variant: ProductDetailViewProps["variants"][number]): Record<string, string> => {
+    const combination = variant.optionCombination ?? {};
+    if (Object.keys(combination).length > 0) return combination;
+    const legacy: Record<string, string> = {};
+    if (variant.color) legacy.Color = variant.color;
+    if (variant.size) legacy.Size = variant.size;
+    return legacy;
+  };
+
+  const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>(() => optionsOf(variants[0] ?? ({} as any)));
+
+  // A value is unavailable when no active, in-stock variant can satisfy it
+  // together with the other current selections.
+  const isValueAvailable = (axisName: string, value: string) =>
+    sellableVariants.some((variant) => {
+      const combination = optionsOf(variant);
+      if (combination[axisName] !== value) return false;
+      if (variant.stock <= 0) return false;
+      return Object.entries(selectedOptions).every(([key, chosen]) => key === axisName || !chosen || combination[key] === chosen);
+    });
+
+  const matchedVariant =
+    sellableVariants.find((variant) => {
+      const combination = optionsOf(variant);
+      return Object.entries(selectedOptions).every(([key, value]) => !value || combination[key] === value);
+    }) ?? sellableVariants[0];
+
+  const currentPrice = matchedVariant?.price ?? product.price;
+  const comparePrice = matchedVariant?.compareAtPrice ?? product.compareAtPrice;
+  const currentStock = matchedVariant?.stock ?? 0;
+  const selectionLabel = Object.entries(selectedOptions)
+    .filter(([, value]) => value)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(" / ");
+  const selectedColor = selectedOptions.Color ?? selectedOptions.color ?? "";
+  const selectedSize = selectedOptions.Size ?? selectedOptions.size ?? "";
 
   const images = product.images.length > 0 ? product.images : [
     { url: "https://images.unsplash.com/photo-1556905055-8f358a7a47b2?w=1000&q=80" },
@@ -99,10 +148,12 @@ export function ProductDetailView({
       nameEn: product.nameEn,
       nameAr: product.nameAr || product.nameEn,
       nameFr: product.nameFr || product.nameEn,
-      sku: matchedVariant?.id ? matchedVariant.id : product.sku,
+      sku: matchedVariant?.sku ?? product.sku,
       price: currentPrice,
       color: selectedColor,
       size: selectedSize,
+      options: selectedOptions,
+      optionLabel: selectionLabel,
       quantity,
       imageUrl: images[activeImageIndex]?.url || images[0]?.url,
       availableStock: currentStock,
@@ -171,9 +222,9 @@ export function ProductDetailView({
           <span className="text-2xl sm:text-3xl font-black text-white">
             {formatDZD(currentPrice)}
           </span>
-          {product.compareAtPrice && product.compareAtPrice > currentPrice && (
+          {comparePrice && comparePrice > currentPrice && (
             <span className="text-base text-zinc-500 line-through">
-              {formatDZD(product.compareAtPrice)}
+              {formatDZD(comparePrice)}
             </span>
           )}
         </div>
@@ -197,49 +248,15 @@ export function ProductDetailView({
           )}
         </div>
 
-        {/* Color Swatches */}
-        {uniqueColors.length > 0 && (
-          <div className="space-y-2">
-            <label className="text-xs font-mono uppercase text-zinc-300 block">
-              {t("color")}: <strong className="text-white">{selectedColor}</strong>
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {uniqueColors.map((col) => {
-                const colorHex = variants.find((v) => v.color === col)?.colorHex;
-                return (
-                  <button
-                    key={col}
-                    type="button"
-                    onClick={() => setSelectedColor(col)}
-                    className={`px-3 py-1.5 border text-xs font-mono uppercase transition-all flex items-center gap-2 ${
-                      selectedColor === col
-                        ? "bg-white text-black border-white font-bold"
-                        : "bg-black text-zinc-300 border-white/20 hover:border-white/40"
-                    }`}
-                  >
-                    {colorHex && (
-                      <span
-                        className="w-3 h-3 rounded-full border border-black/50"
-                        style={{ backgroundColor: colorHex }}
-                      />
-                    )}
-                    <span>{col}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Size Selection */}
-        {uniqueSizes.length > 0 && (
-          <div className="space-y-2">
+        {/* Flexible option selectors (Size, Color, Material, Fit, Style, ...) */}
+        {axes.map((axis) => (
+          <div className="space-y-2" key={axis.name}>
             <div className="flex items-center justify-between">
               <label className="text-xs font-mono uppercase text-zinc-300">
-                {t("size")}: <strong className="text-white">{selectedSize}</strong>
+                {axis.name}: <strong className="text-white">{selectedOptions[axis.name] || "—"}</strong>
               </label>
 
-              {sizeGuide && (
+              {sizeGuide && axis.name.toLowerCase() === "size" && (
                 <button
                   type="button"
                   onClick={() => setSizeGuideOpen(true)}
@@ -252,23 +269,32 @@ export function ProductDetailView({
             </div>
 
             <div className="flex flex-wrap gap-2">
-              {uniqueSizes.map((sz) => (
-                <button
-                  key={sz}
-                  type="button"
-                  onClick={() => setSelectedSize(sz)}
-                  className={`min-w-[42px] h-10 px-3 border text-xs font-mono uppercase font-bold transition-all flex items-center justify-center ${
-                    selectedSize === sz
-                      ? "bg-white text-black border-white shadow-md"
-                      : "bg-black text-zinc-300 border-white/20 hover:border-white/40"
-                  }`}
-                >
-                  {sz}
-                </button>
-              ))}
+              {axis.values.map((optionValue) => {
+                const available = isValueAvailable(axis.name, optionValue.value);
+                const isSelected = selectedOptions[axis.name] === optionValue.value;
+                return (
+                  <button
+                    key={optionValue.value}
+                    type="button"
+                    disabled={!available}
+                    onClick={() => setSelectedOptions((prev) => ({ ...prev, [axis.name]: optionValue.value }))}
+                    title={available ? optionValue.value : `${optionValue.value} — unavailable`}
+                    className={`min-w-[42px] h-10 px-3 border text-xs font-mono uppercase font-bold transition-all flex items-center justify-center gap-2 ${
+                      isSelected
+                        ? "bg-white text-black border-white shadow-md"
+                        : "bg-black text-zinc-300 border-white/20 hover:border-white/40"
+                    } ${!available ? "opacity-30 line-through cursor-not-allowed" : ""}`}
+                  >
+                    {optionValue.colorHex && (
+                      <span className="w-3 h-3 rounded-full border border-black/50" style={{ backgroundColor: optionValue.colorHex }} />
+                    )}
+                    <span>{optionValue.value}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
-        )}
+        ))}
 
         {/* Quantity Picker */}
         <div className="space-y-2">
