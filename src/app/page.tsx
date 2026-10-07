@@ -1,4 +1,5 @@
 import { db } from "@/db";
+import { ensureDatabaseSchema } from "@/db/initialize";
 import { pageSections, products, categories, navigation, settings } from "@/db/schema";
 import { eq, asc } from "drizzle-orm";
 import { Header } from "@/components/layout/Header";
@@ -6,9 +7,13 @@ import { Footer } from "@/components/layout/Footer";
 import { StorefrontSection } from "@/components/sections/StorefrontSection";
 import { DirectOrderModal } from "@/components/checkout/DirectOrderModal";
 
-export const revalidate = 0;
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 export default async function HomePage() {
+  // This route must not issue a storefront query until the additive schema is ready.
+  await ensureDatabaseSchema();
+
   // Fetch published sections for homepage
   const sections = await db
     .select()

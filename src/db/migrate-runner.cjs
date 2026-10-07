@@ -1,9 +1,10 @@
 /**
- * Applies committed Drizzle SQL migrations using DATABASE_URL.
+ * Applies the committed, additive Drizzle SQL migrations.
  *
- * Safe to run more than once. Statements that remove tables, columns, or rows
- * are rejected so a deploy cannot wipe production data. The local fallback
- * URL in src/db/index.ts is intentionally not used here.
+ * Application queries always continue to use DATABASE_URL. Migrations prefer a
+ * direct Neon endpoint because schema work is not safe through every pooler.
+ * The migration SQL is deliberately limited to additive operations so a deploy
+ * cannot remove production data.
  */
 const fs = require("node:fs");
 const os = require("node:os");
@@ -17,7 +18,7 @@ try {
   dotenv.config({ path: path.resolve(process.cwd(), ".env.local"), quiet: true });
   dotenv.config({ path: path.resolve(process.cwd(), ".env"), quiet: true });
 } catch {
-  // Vercel injects DATABASE_URL directly. A missing dotenv install must not crash startup.
+  // Vercel injects environment variables directly. This is only a local convenience.
 }
 
 const PAGE_SECTION_COLUMNS = [
@@ -37,11 +38,99 @@ const PAGE_SECTION_COLUMNS = [
 const DESTRUCTIVE_SQL =
   /\b(drop\s+(table|schema|index|constraint|column)|truncate\b|delete\s+from)\b/i;
 
+function stringifyError(value) {
+  if (value instanceof Error) return value.message;
+  return String(value);
+}
+
 function redact(value) {
-  const text = value instanceof Error ? value.message : String(value);
-  return text
-    .replace(/postgres(?:ql)?:\/\/[^\s'"]+/gi, "postgresql://***")
-    .replace(/password=[^\s&'"]+/gi, "password=***");
+  return stringifyError(value)
+    .replace(/postgres(?:ql)?:\/\/[^\s'"`]+/gi, "postgresql://***")
+    .replace(
+      /\b(database_url(?:_unpooled)?|postgres_url_non_pooling|connection_string)\s*=\s*[^\s'"`]+/gi,
+      "$1=***"
+    )
+    .replace(
+      /\b(password|pass|pwd|token|secret)\s*([=:])\s*[^\s&,;'"`]+/gi,
+      "$1$2***"
+    );
+}
+
+function formatDatabaseError(error) {
+  if (!error || typeof error !== "object") {
+    return redact(error || "Unknown database error");
+  }
+
+  const databaseError = error;
+  const parts = [];
+  if (typeof databaseError.code === "string" && databaseError.code) {
+    parts.push(`code ${databaseError.code}`);
+  }
+  for (const key of ["message", "detail", "hint"]) {
+    if (typeof databaseError[key] === "string" && databaseError[key]) {
+      parts.push(databaseError[key]);
+    }
+  }
+
+  return redact(parts.length > 0 ? parts.join(": ") : "Unknown database error");
+}
+
+function environmentValue(environment, name) {
+  const value = environment[name];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/**
+ * Converts only an unambiguous Neon pooled endpoint such as
+ * ep-example-pooler.us-east-2.aws.neon.tech to its direct counterpart.
+ * Invalid URLs and non-Neon hosts are intentionally left unchanged.
+ */
+function deriveDirectNeonUrl(databaseUrl) {
+  try {
+    const url = new URL(databaseUrl);
+    if (url.protocol !== "postgres:" && url.protocol !== "postgresql:") {
+      return undefined;
+    }
+
+    const match = url.hostname.match(
+      /^(ep-[a-z0-9-]+)-pooler((?:\.[a-z0-9-]+)*\.neon\.tech)$/i
+    );
+    if (!match) return undefined;
+
+    url.hostname = `${match[1]}${match[2]}`;
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveMigrationDatabaseUrl(environment = process.env) {
+  const unpooled = environmentValue(environment, "DATABASE_URL_UNPOOLED");
+  if (unpooled) {
+    return { connectionString: unpooled, source: "DATABASE_URL_UNPOOLED" };
+  }
+
+  const nonPooling = environmentValue(environment, "POSTGRES_URL_NON_POOLING");
+  if (nonPooling) {
+    return { connectionString: nonPooling, source: "POSTGRES_URL_NON_POOLING" };
+  }
+
+  const databaseUrl = environmentValue(environment, "DATABASE_URL");
+  if (!databaseUrl) {
+    throw new Error(
+      "DATABASE_URL is required for application queries and schema initialization. Refusing to use a local fallback."
+    );
+  }
+
+  const directNeonUrl = deriveDirectNeonUrl(databaseUrl);
+  if (directNeonUrl) {
+    return {
+      connectionString: directNeonUrl,
+      source: "DATABASE_URL (derived Neon direct host)",
+    };
+  }
+
+  return { connectionString: databaseUrl, source: "DATABASE_URL" };
 }
 
 function stripSqlComments(sql) {
@@ -109,8 +198,7 @@ function assertEmbedMatchesDisk(dir, embedded) {
 }
 
 function materializeEmbedded(embedded) {
-  const dir = path.join(os.tmpdir(), "zavrune-drizzle-migrations");
-  fs.rmSync(dir, { recursive: true, force: true });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zavrune-drizzle-migrations-"));
   for (const [rel, contents] of Object.entries(embedded.files)) {
     const dest = path.join(dir, rel);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
@@ -185,24 +273,13 @@ async function migrationCount(pool) {
   return result.rows[0].count;
 }
 
-async function forgetRecordedMigrations(pool, folder) {
-  const journal = JSON.parse(
-    fs.readFileSync(path.join(folder, "meta", "_journal.json"), "utf8")
-  );
-  const stamps = journal.entries.map((entry) => String(entry.when));
-  await pool.query(
-    "delete from drizzle.__drizzle_migrations where created_at = any($1::bigint[])",
-    [stamps]
-  );
-}
-
 async function assertSchema(pool, tables) {
   for (const [table, columns] of Object.entries(tables)) {
     const projection = columns.map(quoteIdent).join(", ");
     await pool.query(`select ${projection} from ${quoteIdent(table)} limit 0`);
   }
 
-  // Same shape as the homepage query that currently 500s in production.
+  // This is the same shape as the first homepage query that previously 500ed.
   await pool.query(
     `select "id", "page_id", "section_type", "display_order", "is_visible",
             "desktop_visible", "mobile_visible", "version", "config",
@@ -216,39 +293,31 @@ async function assertSchema(pool, tables) {
 }
 
 async function applyPendingMigrations() {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    throw new Error(
-      "DATABASE_URL is required to apply migrations. Refusing to use a local fallback."
-    );
-  }
-
+  const migrationDatabase = resolveMigrationDatabaseUrl();
   const folder = prepareMigrationsFolder();
   const { tables } = readMigrationSql(folder);
   const pool = new Pool({
-    connectionString: databaseUrl,
+    connectionString: migrationDatabase.connectionString,
     max: 1,
     connectionTimeoutMillis: 20000,
     query_timeout: 60000,
   });
 
+  let client;
   try {
-    const before = await migrationCount(pool);
-    const db = drizzle(pool);
+    client = await pool.connect();
+    // Multiple Vercel cold starts can reach this code at once. Hold the lock on
+    // the same direct connection used by Drizzle so only one applies migrations.
+    await client.query("select pg_advisory_lock(hashtext($1))", [
+      "zavrune-schema-initialization",
+    ]);
+
+    console.log(`[db] Initializing schema with ${migrationDatabase.source}.`);
+    const before = await migrationCount(client);
+    const db = drizzle(client);
     await migrate(db, { migrationsFolder: folder });
-    try {
-      await assertSchema(pool, tables);
-    } catch (error) {
-      try {
-        await forgetRecordedMigrations(pool, folder);
-      } catch (forgetError) {
-        throw new Error(
-          `${redact(error)} (also failed to reset the migration journal: ${redact(forgetError)})`
-        );
-      }
-      throw error;
-    }
-    const after = await migrationCount(pool);
+    await assertSchema(client, tables);
+    const after = await migrationCount(client);
     if (after > before) {
       console.log(
         `[db] Applied ${after - before} migration(s). Required tables, including page_sections, are present.`
@@ -257,31 +326,32 @@ async function applyPendingMigrations() {
       console.log("[db] Database schema already up to date. page_sections is present.");
     }
   } finally {
+    // Ending this one-connection pool releases the session-scoped advisory lock.
+    client?.release();
     await pool.end();
   }
 }
 
 async function cli() {
   const ifConfigured = process.argv.includes("--if-configured");
-  const bestEffort = process.argv.includes("--best-effort");
 
   try {
     const folder = prepareMigrationsFolder();
     readMigrationSql(folder);
   } catch (error) {
-    console.error("[db] Migration files are invalid:", redact(error));
+    console.error(`ZAVRUNE_DB_ERROR: Migration files are invalid: ${formatDatabaseError(error)}`);
     process.exit(1);
   }
 
-  if (!process.env.DATABASE_URL) {
+  if (!environmentValue(process.env, "DATABASE_URL")) {
     if (ifConfigured) {
       console.warn(
-        "[db] DATABASE_URL is not set, so migrations were not applied. Server startup applies them when the variable is present."
+        "[db] DATABASE_URL is not set, so migrations were not applied during build. Runtime initialization will require DATABASE_URL before serving database-backed pages."
       );
       return;
     }
     console.error(
-      "[db] DATABASE_URL is required. Export it in the environment and rerun npm run db:migrate. Do not commit the connection string."
+      "ZAVRUNE_DB_ERROR: DATABASE_URL is required. Configure it outside source control before running migrations."
     );
     process.exit(1);
   }
@@ -289,20 +359,22 @@ async function cli() {
   try {
     await applyPendingMigrations();
   } catch (error) {
-    console.error("[db] Migration failed:", redact(error));
-    if (bestEffort) {
-      console.error("[db] Continuing the build. Server startup will retry the same migration.");
-      return;
-    }
+    console.error(`ZAVRUNE_DB_ERROR: Migration failed: ${formatDatabaseError(error)}`);
     process.exit(1);
   }
 }
 
 if (require.main === module) {
   cli().catch((error) => {
-    console.error("[db] Migration failed:", redact(error));
+    console.error(`ZAVRUNE_DB_ERROR: Migration failed: ${formatDatabaseError(error)}`);
     process.exit(1);
   });
 }
 
-module.exports = { applyPendingMigrations, redact };
+module.exports = {
+  applyPendingMigrations,
+  deriveDirectNeonUrl,
+  formatDatabaseError,
+  redact,
+  resolveMigrationDatabaseUrl,
+};
