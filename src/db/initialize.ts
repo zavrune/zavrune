@@ -1,4 +1,6 @@
-import { applyPendingMigrations, formatDatabaseError } from "./migrate";
+import { formatDatabaseError } from "./errors";
+import { pool } from "./index";
+import { isMigrationStateCurrent } from "./migration-state";
 
 const DATABASE_ERROR_PREFIX = "ZAVRUNE_DB_ERROR";
 
@@ -20,20 +22,35 @@ function initializationState(): DatabaseInitializationState {
 }
 
 function initializationError(error: unknown): string {
-  return `${DATABASE_ERROR_PREFIX}: Database schema initialization failed: ${formatDatabaseError(error)}`;
+  const detail = formatDatabaseError(error);
+  // Avoid a duplicated prefix when the underlying error is already a ZAVRUNE one.
+  return detail.startsWith(DATABASE_ERROR_PREFIX)
+    ? detail
+    : `${DATABASE_ERROR_PREFIX}: Database schema initialization failed: ${detail}`;
+}
+
+/** Cheap fast path, or bounded polling while a deployment commits migrations. */
+async function waitForDatabaseSchema(): Promise<void> {
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    if (await isMigrationStateCurrent(pool, Math.min(3000, deadline - Date.now()))) return;
+    const remaining = deadline - Date.now();
+    if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(250, remaining)));
+  }
+  throw new Error("Committed migrations are not ready. Run npm run db:migrate with a direct database URL; schema readiness polling deadline exceeded.");
 }
 
 /**
- * Ensures committed, additive schema migrations have completed before a
- * database-backed request proceeds. The in-flight promise is shared within a
- * server instance; a later request can retry after a transient failure.
+ * Read/poll only: the build/CLI owns DDL on a direct connection. Serverless
+ * requests use the shared application pool and never enter a session lock or
+ * migration path. Only successful readiness is memoized; failures can retry.
  */
 export async function ensureDatabaseSchema(): Promise<void> {
   const state = initializationState();
   if (state.ready) return;
 
   if (!state.promise) {
-    state.promise = applyPendingMigrations()
+    state.promise = waitForDatabaseSchema()
       .then(() => {
         state.ready = true;
         state.error = undefined;
@@ -83,8 +100,8 @@ const globalForAdmin = globalThis as typeof globalThis & {
 
 /**
  * Schema + delivery rates + managed product groups + first-admin provisioning.
- * Shared by every admin page and admin API so a cold serverless instance is
- * always ready before the first admin request is served. Idempotent.
+ * Shared by admin pages/APIs. Existing defaults take read-only fast paths;
+ * missing defaults are inserted without overwriting owner-managed values.
  */
 export async function ensureAdminReady(): Promise<void> {
   await ensureDatabaseSchema();
