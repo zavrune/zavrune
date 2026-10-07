@@ -21,9 +21,9 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const [language, setLanguageState] = useState<Language>("en");
 
   useEffect(() => {
-    const saved = localStorage.getItem("zavrune_lang") as Language;
+    const saved = localStorage.getItem("zavrune_lang") as Language | null;
     if (saved && ["en", "ar", "fr"].includes(saved)) {
-      setLanguageState(saved);
+      queueMicrotask(() => setLanguageState(saved));
     }
   }, []);
 

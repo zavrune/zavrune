@@ -3,6 +3,10 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { settings } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { jsonOk, readJsonBody, withAdmin } from "@/lib/api";
+import { recordAdminAudit } from "@/lib/auth";
+
+export const runtime = "nodejs";
 
 export async function GET() {
   try {
@@ -40,28 +44,30 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  try {
-    await ensureStorefrontReady();
-    const body = await req.json();
+  return withAdmin(
+    req,
+    async (session) => {
+      await ensureStorefrontReady();
+      const body = await readJsonBody(req);
 
-    await db
-      .insert(settings)
-      .values({
-        key: "design_system",
-        value: body,
-        updatedAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: settings.key,
-        set: {
+      await db
+        .insert(settings)
+        .values({
+          key: "design_system",
           value: body,
           updatedAt: new Date(),
-        },
-      });
+        })
+        .onConflictDoUpdate({
+          target: settings.key,
+          set: {
+            value: body,
+            updatedAt: new Date(),
+          },
+        });
 
-    return NextResponse.json({ success: true, settings: body });
-  } catch (error: unknown) {
-    logDatabaseError("settings/design request failed", error);
-    return NextResponse.json({ error: "Database request failed" }, { status: 500 });
-  }
+      await recordAdminAudit(session.admin, "admin.design_system.updated", { req });
+      return jsonOk({ settings: body });
+    },
+    { context: "settings/design request failed" }
+  );
 }

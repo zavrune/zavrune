@@ -1,10 +1,13 @@
 import { ensureStorefrontReady, logDatabaseError } from "@/db/initialize";
-import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { products, categories, pageSections } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { jsonOk, jsonServerError, withAdmin } from "@/lib/api";
 
-export async function GET() {
+export const runtime = "nodejs";
+
+export async function GET(req: Request) {
+  return withAdmin(req, async () => {
   try {
     await ensureStorefrontReady();
     const issues: { id: string; type: "ERROR" | "WARNING" | "PASS"; title: string; detail: string; fixAction?: string }[] = [];
@@ -110,9 +113,9 @@ export async function GET() {
       detail: "No cart system active. BUY NOW direct purchase flow verified.",
     });
 
-    return NextResponse.json({ success: true, issues });
+    return jsonOk({ issues });
   } catch (error: unknown) {
-    logDatabaseError("Product/category health query failed", error);
-    return NextResponse.json({ success: false, error: "Database request failed" }, { status: 500 });
+    return jsonServerError("Product/category health query failed", error);
   }
+  }, { context: "admin/health request failed" });
 }

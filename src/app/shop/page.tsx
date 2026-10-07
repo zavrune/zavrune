@@ -2,6 +2,7 @@ import { ShopSortSelect } from "@/components/shop/ShopSortSelect";
 import { ensureStorefrontReady, storefrontQuery } from "@/db/initialize";
 import { db } from "@/db";
 import { products, categories, collections, productVariants, navigation } from "@/db/schema";
+import { getGroupProductIds, ensureProductGroups } from "@/lib/product-groups";
 import { eq, asc, desc } from "drizzle-orm";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
@@ -20,6 +21,20 @@ interface ShopPageProps {
   }>;
 }
 
+async function getManagedCollections() {
+  const groups = await Promise.all(
+    (["new_drop", "featured"] as const).map(async (key) => {
+      const productIds = await getGroupProductIds(key);
+      return {
+        slug: key === "new_drop" ? "new-drop" : "featured",
+        titleEn: key === "new_drop" ? "NEW DROP" : "FEATURED",
+        productIds,
+      };
+    })
+  );
+  return groups.filter((group) => group.productIds.length > 0);
+}
+
 export default async function ShopPage({ searchParams }: ShopPageProps) {
   await ensureStorefrontReady();
   const params = await searchParams;
@@ -27,6 +42,11 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
   const selectedCollectionSlug = params.collection || "";
   const searchQuery = params.search || "";
   const sortOption = params.sort || "newest";
+
+  // Managed New Drop / Featured collections take precedence over the legacy
+  // collection slug when the admin has curated products.
+  await ensureProductGroups();
+  const managedCollections = await getManagedCollections();
 
   // Fetch Categories & Collections for filter sidebar/pills
   const allCategories = await storefrontQuery(db
@@ -69,10 +89,14 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
       collectionSlug: matchedCollection?.slug || "",
       variants: pVariants.map((v) => ({
         id: v.id,
+        sku: v.sku,
         color: v.color,
         size: v.size,
+        colorHex: v.colorHex,
+        optionCombination: v.optionCombination,
         stock: v.stock,
         price: v.price || p.price,
+        status: v.status,
       })),
     };
   });
@@ -83,7 +107,16 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
   }
 
   if (selectedCollectionSlug) {
-    filteredProducts = filteredProducts.filter((p) => p.collectionSlug === selectedCollectionSlug);
+    const managed = managedCollections.find((group) => group.slug === selectedCollectionSlug);
+    if (managed) {
+      // Admin-curated order wins for the managed New Drop / Featured groups.
+      const order = new Map(managed.productIds.map((id, index) => [id, index]));
+      filteredProducts = filteredProducts
+        .filter((p) => order.has(p.id))
+        .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+    } else {
+      filteredProducts = filteredProducts.filter((p) => p.collectionSlug === selectedCollectionSlug);
+    }
   }
 
   if (searchQuery) {
@@ -111,7 +144,8 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
               {selectedCategorySlug
                 ? allCategories.find((c) => c.slug === selectedCategorySlug)?.nameEn
                 : selectedCollectionSlug
-                ? allCollections.find((c) => c.slug === selectedCollectionSlug)?.titleEn
+                ? managedCollections.find((c) => c.slug === selectedCollectionSlug)?.titleEn ??
+                  allCollections.find((c) => c.slug === selectedCollectionSlug)?.titleEn
                 : "STREETWEAR COLLECTION"}
             </h1>
           </div>
@@ -211,7 +245,7 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
                 badge={p.badge}
                 categoryName={p.categoryName}
                 images={p.images as any}
-                variants={p.variants}
+                variants={p.variants as any}
               />
             ))}
           </div>

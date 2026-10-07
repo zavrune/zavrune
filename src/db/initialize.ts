@@ -77,6 +77,39 @@ export async function ensureStorefrontReady(): Promise<void> {
   await globalForStorefront.__zavruneStorefrontPromise;
 }
 
+const globalForAdmin = globalThis as typeof globalThis & {
+  __zavruneAdminPromise?: Promise<void>;
+};
+
+/**
+ * Schema + delivery rates + managed product groups + first-admin provisioning.
+ * Shared by every admin page and admin API so a cold serverless instance is
+ * always ready before the first admin request is served. Idempotent.
+ */
+export async function ensureAdminReady(): Promise<void> {
+  await ensureDatabaseSchema();
+
+  if (!globalForAdmin.__zavruneAdminPromise) {
+    globalForAdmin.__zavruneAdminPromise = (async () => {
+      const [{ ensureDeliveryRates }, { ensureProductGroups }, { ensureFirstAdmin }] = await Promise.all([
+        import("@/lib/delivery"),
+        import("@/lib/product-groups"),
+        import("@/lib/admin-bootstrap"),
+      ]);
+      await ensureDeliveryRates();
+      await ensureProductGroups();
+      await ensureFirstAdmin();
+    })().catch((error: unknown) => {
+      globalForAdmin.__zavruneAdminPromise = undefined;
+      const message = `ZAVRUNE_DB_ERROR: Admin initialization failed: ${formatDatabaseError(error)}`;
+      console.error(message);
+      throw new Error(message);
+    });
+  }
+
+  await globalForAdmin.__zavruneAdminPromise;
+}
+
 /** Never return raw driver messages (which may contain connection credentials). */
 export function logDatabaseError(context: string, error: unknown): void {
   console.error(`ZAVRUNE_DB_ERROR: ${context}: ${formatDatabaseError(error)}`);

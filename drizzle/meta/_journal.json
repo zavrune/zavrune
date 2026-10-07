@@ -8,6 +8,13 @@
       "when": 1791356840178,
       "tag": "0000_init_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791375247086,
+      "tag": "0001_admin_dashboard",
+      "breakpoints": true
     }
   ]
 }

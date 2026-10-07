@@ -10,8 +10,11 @@ export interface DirectOrderItem {
   nameFr: string;
   sku: string;
   price: number; // in DZD
-  color: string;
-  size: string;
+  color?: string;
+  size?: string;
+  /** Arbitrary option selection, e.g. { Size: "M", Material: "Cotton" } */
+  options?: Record<string, string>;
+  optionLabel?: string;
   quantity: number;
   imageUrl?: string;
   availableStock?: number;

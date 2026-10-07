@@ -16,8 +16,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: false, error: "Forbidden origin" }, { status: 403 });
   }
   try {
-    const admin = await getAdminSession();
-    if (!admin || admin.role !== "admin") {
+    const session = await getAdminSession();
+    if (!session || session.admin.role !== "admin") {
       return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
     await ensureDatabaseSchema();
