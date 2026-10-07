@@ -2,7 +2,7 @@ import "dotenv/config";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
-const databaseUrl = process.env.DATABASE_URL || "postgresql://postgres:postgres@127.0.0.1:5432/app_db";
+const databaseUrl = process.env.DATABASE_URL;
 
 const globalForDb = globalThis as typeof globalThis & {
   __arenaNextJsPostgresqlPool?: Pool;
@@ -18,4 +18,14 @@ if (process.env.NODE_ENV !== "production") {
   globalForDb.__arenaNextJsPostgresqlPool = pool;
 }
 
-export const db = drizzle(pool);
+const queryDb = drizzle(pool);
+
+// Fail closed without an application URL; never let pg use local defaults.
+export const db = new Proxy(queryDb, {
+  get(target, property, receiver) {
+    if (!databaseUrl?.trim()) {
+      throw new Error("ZAVRUNE_DB_ERROR: DATABASE_URL is required for application queries.");
+    }
+    return Reflect.get(target, property, receiver);
+  },
+});

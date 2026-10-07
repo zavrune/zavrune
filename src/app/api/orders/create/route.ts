@@ -1,3 +1,4 @@
+import { ensureStorefrontReady, logDatabaseError } from "@/db/initialize";
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { products, productVariants, orders, orderItems, customers, inventoryEvents, orderEvents } from "@/db/schema";
@@ -5,6 +6,7 @@ import { eq, sql } from "drizzle-orm";
 
 export async function POST(req: Request) {
   try {
+    await ensureStorefrontReady();
     const body = await req.json();
     const {
       customerName,
@@ -192,10 +194,11 @@ export async function POST(req: Request) {
       orderId: createdOrder.id,
       totalAmount: createdOrder.totalAmount,
     });
-  } catch (error: any) {
-    console.error("Failed to create direct order:", error);
+  } catch (error: unknown) {
+    logDatabaseError("orders/create request failed", error);
+
     return NextResponse.json(
-      { success: false, error: error?.message || "Internal server error" },
+      { success: false, error: "Database request failed" },
       { status: 500 }
     );
   }

@@ -1,3 +1,4 @@
+import { ensureStorefrontReady, storefrontQuery } from "@/db/initialize";
 import { db } from "@/db";
 import { products, productVariants, categories, sizeGuides, sizeGuideMeasurements, navigation } from "@/db/schema";
 import { eq, ne } from "drizzle-orm";
@@ -15,50 +16,51 @@ interface PDPProps {
 }
 
 export default async function ProductDetailPage({ params }: PDPProps) {
+  await ensureStorefrontReady();
   const { slug } = await params;
 
   // 1. Fetch Product
-  const [product] = await db
+  const [product] = await storefrontQuery(db
     .select()
     .from(products)
     .where(eq(products.slug, slug))
-    .limit(1);
+    .limit(1));
 
   if (!product || product.status === "archived") {
     notFound();
   }
 
   // 2. Fetch Product Variants
-  const variants = await db
+  const variants = await storefrontQuery(db
     .select()
     .from(productVariants)
-    .where(eq(productVariants.productId, product.id));
+    .where(eq(productVariants.productId, product.id)));
 
   // 3. Fetch Category
   let categoryName = "";
   if (product.categoryId) {
-    const [cat] = await db
+    const [cat] = await storefrontQuery(db
       .select()
       .from(categories)
       .where(eq(categories.id, product.categoryId))
-      .limit(1);
+      .limit(1));
     categoryName = cat?.nameEn || "";
   }
 
   // 4. Fetch Size Guide if available
   let sizeGuideData: any = null;
   if (product.sizeGuideId) {
-    const [sg] = await db
+    const [sg] = await storefrontQuery(db
       .select()
       .from(sizeGuides)
       .where(eq(sizeGuides.id, product.sizeGuideId))
-      .limit(1);
+      .limit(1));
 
     if (sg) {
-      const measurements = await db
+      const measurements = await storefrontQuery(db
         .select()
         .from(sizeGuideMeasurements)
-        .where(eq(sizeGuideMeasurements.sizeGuideId, sg.id));
+        .where(eq(sizeGuideMeasurements.sizeGuideId, sg.id)));
 
       sizeGuideData = {
         name: sg.name,
@@ -69,17 +71,17 @@ export default async function ProductDetailPage({ params }: PDPProps) {
   }
 
   // 5. Fetch Related Products
-  const relatedProducts = await db
+  const relatedProducts = await storefrontQuery(db
     .select()
     .from(products)
     .where(ne(products.id, product.id))
-    .limit(4);
+    .limit(4));
 
   // 6. Navigation
-  const navItems = await db
+  const navItems = await storefrontQuery(db
     .select()
     .from(navigation)
-    .where(eq(navigation.location, "header"));
+    .where(eq(navigation.location, "header")));
 
   return (
     <div className="min-h-screen bg-[#08080A] text-zinc-100 flex flex-col font-sans antialiased">

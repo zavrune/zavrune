@@ -1,3 +1,4 @@
+import { ensureStorefrontReady, storefrontQuery } from "@/db/initialize";
 import { db } from "@/db";
 import { orders, orderItems, navigation } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -14,27 +15,28 @@ interface OrderSuccessProps {
 }
 
 export default async function OrderSuccessPage({ params }: OrderSuccessProps) {
+  await ensureStorefrontReady();
   const { orderNumber } = await params;
 
-  const [order] = await db
+  const [order] = await storefrontQuery(db
     .select()
     .from(orders)
     .where(eq(orders.orderNumber, orderNumber))
-    .limit(1);
+    .limit(1));
 
   if (!order) {
     notFound();
   }
 
-  const items = await db
+  const items = await storefrontQuery(db
     .select()
     .from(orderItems)
-    .where(eq(orderItems.orderId, order.id));
+    .where(eq(orderItems.orderId, order.id)));
 
-  const navItems = await db
+  const navItems = await storefrontQuery(db
     .select()
     .from(navigation)
-    .where(eq(navigation.location, "header"));
+    .where(eq(navigation.location, "header")));
 
   return (
     <div className="min-h-screen bg-[#08080A] text-zinc-100 flex flex-col font-sans antialiased">

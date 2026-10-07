@@ -1,11 +1,13 @@
+import { ShopSortSelect } from "@/components/shop/ShopSortSelect";
+import { ensureStorefrontReady, storefrontQuery } from "@/db/initialize";
 import { db } from "@/db";
 import { products, categories, collections, productVariants, navigation } from "@/db/schema";
-import { eq, asc, desc, like, or, and } from "drizzle-orm";
+import { eq, asc, desc } from "drizzle-orm";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { ProductCard } from "@/components/product/ProductCard";
 import { DirectOrderModal } from "@/components/checkout/DirectOrderModal";
-import { SlidersHorizontal, Search, X } from "lucide-react";
+import { SlidersHorizontal, X } from "lucide-react";
 
 export const revalidate = 0;
 
@@ -19,6 +21,7 @@ interface ShopPageProps {
 }
 
 export default async function ShopPage({ searchParams }: ShopPageProps) {
+  await ensureStorefrontReady();
   const params = await searchParams;
   const selectedCategorySlug = params.category || "";
   const selectedCollectionSlug = params.collection || "";
@@ -26,32 +29,32 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
   const sortOption = params.sort || "newest";
 
   // Fetch Categories & Collections for filter sidebar/pills
-  const allCategories = await db
+  const allCategories = await storefrontQuery(db
     .select()
     .from(categories)
     .where(eq(categories.isActive, true))
-    .orderBy(asc(categories.displayOrder));
+    .orderBy(asc(categories.displayOrder)));
 
-  const allCollections = await db
+  const allCollections = await storefrontQuery(db
     .select()
     .from(collections)
     .where(eq(collections.isActive, true))
-    .orderBy(asc(collections.displayOrder));
+    .orderBy(asc(collections.displayOrder)));
 
   // Fetch Nav
-  const navItems = await db
+  const navItems = await storefrontQuery(db
     .select()
     .from(navigation)
-    .where(eq(navigation.location, "header"));
+    .where(eq(navigation.location, "header")));
 
   // Fetch Products & Variants
-  const rawProducts = await db
+  const rawProducts = await storefrontQuery(db
     .select()
     .from(products)
     .where(eq(products.status, "published"))
-    .orderBy(sortOption === "price_asc" ? asc(products.price) : sortOption === "price_desc" ? desc(products.price) : desc(products.createdAt));
+    .orderBy(sortOption === "price_asc" ? asc(products.price) : sortOption === "price_desc" ? desc(products.price) : desc(products.createdAt)));
 
-  const allVariants = await db.select().from(productVariants);
+  const allVariants = await storefrontQuery(db.select().from(productVariants));
 
   // Map variants to products
   let filteredProducts = rawProducts.map((p) => {
@@ -179,7 +182,7 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
                 href="/shop"
                 className="inline-flex items-center gap-1 bg-zinc-800 text-white px-2 py-1 border border-white/20 hover:bg-zinc-700"
               >
-                <span>Query: "{searchQuery}"</span>
+                <span>Query: &quot;{searchQuery}&quot;</span>
                 <X className="w-3 h-3" />
               </a>
             )}
@@ -187,21 +190,7 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
 
           {/* Sort Selector */}
           <div className="flex items-center gap-2 ml-auto">
-            <label className="text-zinc-400 uppercase">Sort:</label>
-            <select
-              defaultValue={sortOption}
-              onChange={(e) => {
-                const newSort = e.target.value;
-                const url = new URL(window.location.href);
-                url.searchParams.set("sort", newSort);
-                window.location.href = url.toString();
-              }}
-              className="bg-black border border-white/20 text-white px-2 py-1 focus:outline-none"
-            >
-              <option value="newest">Newest Arrivals</option>
-              <option value="price_asc">Price: Low to High</option>
-              <option value="price_desc">Price: High to Low</option>
-            </select>
+            <ShopSortSelect sortOption={sortOption} />
           </div>
         </div>
 
