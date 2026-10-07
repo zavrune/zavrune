@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "node src/db/migrate-runner.cjs --if-configured --best-effort && next build",
+    "build": "node src/db/migrate-runner.cjs --if-configured && next build",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
