@@ -1,10 +1,12 @@
+import { ensureStorefrontReady, logDatabaseError } from "@/db/initialize";
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { products, productVariants, categories, pageSections } from "@/db/schema";
+import { products, categories, pageSections } from "@/db/schema";
 import { eq } from "drizzle-orm";
 
 export async function GET() {
   try {
+    await ensureStorefrontReady();
     const issues: { id: string; type: "ERROR" | "WARNING" | "PASS"; title: string; detail: string; fixAction?: string }[] = [];
 
     // 1. Scan products with missing images or empty descriptions
@@ -109,7 +111,8 @@ export async function GET() {
     });
 
     return NextResponse.json({ success: true, issues });
-  } catch (error: any) {
-    return NextResponse.json({ success: false, error: error?.message }, { status: 500 });
+  } catch (error: unknown) {
+    logDatabaseError("Product/category health query failed", error);
+    return NextResponse.json({ success: false, error: "Database request failed" }, { status: 500 });
   }
 }

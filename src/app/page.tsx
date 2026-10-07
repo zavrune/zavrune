@@ -1,7 +1,7 @@
 import { db } from "@/db";
-import { ensureDatabaseSchema } from "@/db/initialize";
-import { pageSections, products, categories, navigation, settings } from "@/db/schema";
-import { eq, asc } from "drizzle-orm";
+import { ensureStorefrontReady, storefrontQuery } from "@/db/initialize";
+import { pageSections, products, categories, navigation } from "@/db/schema";
+import { eq, asc, and, isNull } from "drizzle-orm";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { StorefrontSection } from "@/components/sections/StorefrontSection";
@@ -12,33 +12,33 @@ export const runtime = "nodejs";
 
 export default async function HomePage() {
   // This route must not issue a storefront query until the additive schema is ready.
-  await ensureDatabaseSchema();
+  await ensureStorefrontReady();
 
   // Fetch published sections for homepage
-  const sections = await db
+  const sections = await storefrontQuery(db
     .select()
     .from(pageSections)
-    .where(eq(pageSections.version, "published"))
-    .orderBy(asc(pageSections.displayOrder));
+    .where(and(isNull(pageSections.pageId), eq(pageSections.version, "published")))
+    .orderBy(asc(pageSections.displayOrder)));
 
   // Fetch products and categories for sections
-  const productsList = await db
+  const productsList = await storefrontQuery(db
     .select()
     .from(products)
     .where(eq(products.status, "published"))
-    .orderBy(asc(products.createdAt));
+    .orderBy(asc(products.createdAt)));
 
-  const categoriesList = await db
+  const categoriesList = await storefrontQuery(db
     .select()
     .from(categories)
     .where(eq(categories.isActive, true))
-    .orderBy(asc(categories.displayOrder));
+    .orderBy(asc(categories.displayOrder)));
 
   // Fetch header navigation
-  const navItems = await db
+  const navItems = await storefrontQuery(db
     .select()
     .from(navigation)
-    .where(eq(navigation.location, "header"));
+    .where(eq(navigation.location, "header")));
 
   // Filter visible sections
   const activeSections = sections.filter((s) => s.isVisible);

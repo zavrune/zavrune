@@ -8,9 +8,12 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate && node scripts/sync-migration-embed.cjs",
-    "db:migrate": "node src/db/migrate-runner.cjs"
+    "db:migrate": "node src/db/migrate-runner.cjs",
+    "db:seed": "tsx src/db/run-seed.ts",
+    "test:bootstrap": "tsx tests/production-bootstrap.ts"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "dotenv": "17.3.1",
     "drizzle-orm": "0.45.2",
     "lucide-react": "^1.52.0",
@@ -30,6 +33,7 @@
     "eslint-config-next": "16.2.6",
     "postcss": "8.5.8",
     "tailwindcss": "4.1.17",
+    "tsx": "^4.23.15",
     "typescript": "5.9.3"
   }
 }

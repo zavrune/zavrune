@@ -1,3 +1,4 @@
+import { ensureStorefrontReady, logDatabaseError } from "@/db/initialize";
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { settings } from "@/db/schema";
@@ -5,6 +6,7 @@ import { eq } from "drizzle-orm";
 
 export async function GET() {
   try {
+    await ensureStorefrontReady();
     const [record] = await db
       .select()
       .from(settings)
@@ -31,13 +33,15 @@ export async function GET() {
     }
 
     return NextResponse.json(record.value);
-  } catch (error: any) {
-    return NextResponse.json({ error: error?.message }, { status: 500 });
+  } catch (error: unknown) {
+    logDatabaseError("settings/design request failed", error);
+    return NextResponse.json({ error: "Database request failed" }, { status: 500 });
   }
 }
 
 export async function POST(req: Request) {
   try {
+    await ensureStorefrontReady();
     const body = await req.json();
 
     await db
@@ -56,7 +60,8 @@ export async function POST(req: Request) {
       });
 
     return NextResponse.json({ success: true, settings: body });
-  } catch (error: any) {
-    return NextResponse.json({ error: error?.message }, { status: 500 });
+  } catch (error: unknown) {
+    logDatabaseError("settings/design request failed", error);
+    return NextResponse.json({ error: "Database request failed" }, { status: 500 });
   }
 }

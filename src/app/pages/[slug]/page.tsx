@@ -1,3 +1,4 @@
+import { ensureStorefrontReady, storefrontQuery } from "@/db/initialize";
 import { db } from "@/db";
 import { pages, navigation, sizeGuides, sizeGuideMeasurements, categories } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -14,17 +15,18 @@ interface PageProps {
 }
 
 export default async function CMSPage({ params }: PageProps) {
+  await ensureStorefrontReady();
   const { slug } = await params;
 
-  const navItems = await db
+  const navItems = await storefrontQuery(db
     .select()
     .from(navigation)
-    .where(eq(navigation.location, "header"));
+    .where(eq(navigation.location, "header")));
 
   // Check if size guide page requested
   if (slug === "size-guide") {
-    const guides = await db.select().from(sizeGuides);
-    const measurements = await db.select().from(sizeGuideMeasurements);
+    const guides = await storefrontQuery(db.select().from(sizeGuides));
+    const measurements = await storefrontQuery(db.select().from(sizeGuideMeasurements));
 
     return (
       <div className="min-h-screen bg-[#08080A] text-zinc-100 flex flex-col font-sans antialiased">

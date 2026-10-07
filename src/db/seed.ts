@@ -1,6 +1,5 @@
 import { db } from "./index";
 import {
-  admins,
   settings,
   categories,
   collections,
@@ -12,8 +11,11 @@ import {
   navigation,
   shippingZones,
   shippingMethods,
+  pages,
+  orders,
+  customers,
 } from "./schema";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 
 interface VariantSeed {
   color: string;
@@ -24,21 +26,47 @@ interface VariantSeed {
   compareAtPrice?: number;
 }
 
-export async function seedDatabase() {
-  console.log("⚡ Seeding ZAVRUNE database...");
+const SEED_MARKER = "zavrune_official_seed_v1";
 
-  // 1. Admin Seed
-  const existingAdmin = await db.select().from(admins).limit(1);
-  if (existingAdmin.length === 0) {
-    await db.insert(admins).values({
-      email: "admin@zavrune.com",
-      passwordHash: "$2a$10$wE.6oK72C7n7Zz5T5J5Z5u/m2F2F2F2F2F2F2F2F2F2F2F2F2F2F2", // default demo pass
-      name: "Zavrune Admin",
-      role: "admin",
-    });
-    console.log("✓ Created Default Admin (admin@zavrune.com)");
-  }
+/** Insert-only official starter data. Every write and the eligibility check share
+ * one transaction/connection; the transaction-scoped lock works with poolers.
+ * Explicit admin/CLI runs can safely resume a legacy partial seed. Automatic
+ * bootstrap refuses unmarked nonempty storefronts rather than guessing ownership.
+ */
+export async function seedDatabase({ onlyIfEmpty = false } = {}) {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('zavrune-official-seed-v1'))`);
+    const [marker] = await tx.select().from(settings).where(eq(settings.key, SEED_MARKER));
+    // Completed stores stay untouched even if an owner later removes seed content.
+    if (marker) return;
+    if (onlyIfEmpty) {
+      const occupied = [
+        await tx.select({ id: products.id }).from(products).limit(1),
+        await tx.select({ id: categories.id }).from(categories).limit(1),
+        await tx.select({ id: collections.id }).from(collections).limit(1),
+        await tx.select({ id: pages.id }).from(pages).limit(1),
+        await tx.select({ id: pageSections.id }).from(pageSections).limit(1),
+        await tx.select({ id: navigation.id }).from(navigation).limit(1),
+        await tx.select({ id: sizeGuides.id }).from(sizeGuides).limit(1),
+        await tx.select({ id: shippingZones.id }).from(shippingZones).limit(1),
+        await tx.select({ id: orders.id }).from(orders).limit(1),
+        await tx.select({ id: customers.id }).from(customers).limit(1),
+      ];
+      if (occupied.some((rows) => rows.length > 0)) {
+        console.warn("[db] Unmarked nonempty storefront preserved. To resume a legacy partial seed, use authenticated admin POST /api/seed.");
+        return;
+      }
+    }
+    await seedOfficialData(tx);
+    await tx.insert(settings).values({ key: SEED_MARKER, value: { completed: true } })
+      .onConflictDoNothing();
+  });
+}
 
+type SeedTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function seedOfficialData(db: SeedTransaction) {
+  // Never provision demo admin credentials in production.
   // 2. Settings (Design System + General Configuration)
   const defaultDesignSystem = {
     theme: {
@@ -75,10 +103,7 @@ export async function seedDatabase() {
   await db
     .insert(settings)
     .values({ key: "design_system", value: defaultDesignSystem })
-    .onConflictDoUpdate({
-      target: settings.key,
-      set: { value: defaultDesignSystem },
-    });
+    .onConflictDoNothing();
 
   // 3. Streetwear Categories (All 16 requested streetwear categories + extensibility)
   const categoriesData = [
@@ -134,7 +159,7 @@ export async function seedDatabase() {
   console.log("✓ Collections initialized");
 
   // 5. Size Guides
-  const existingGuide = await db.select().from(sizeGuides).limit(1);
+  const existingGuide = await db.select().from(sizeGuides).where(and(eq(sizeGuides.name, "Streetwear Oversized Tops"), eq(sizeGuides.categoryId, categoryMap["hoodies"]))).limit(1);
   let hoodieGuideId = "";
   if (existingGuide.length === 0) {
     const [guide] = await db.insert(sizeGuides).values({
@@ -144,15 +169,22 @@ export async function seedDatabase() {
     }).returning();
     hoodieGuideId = guide.id;
 
-    await db.insert(sizeGuideMeasurements).values([
-      { sizeGuideId: guide.id, sizeLabel: "S", chest: "58 cm", waist: "56 cm", length: "70 cm", sleeve: "61 cm" },
-      { sizeGuideId: guide.id, sizeLabel: "M", chest: "61 cm", waist: "59 cm", length: "73 cm", sleeve: "63 cm" },
-      { sizeGuideId: guide.id, sizeLabel: "L", chest: "64 cm", waist: "62 cm", length: "76 cm", sleeve: "65 cm" },
-      { sizeGuideId: guide.id, sizeLabel: "XL", chest: "67 cm", waist: "65 cm", length: "78 cm", sleeve: "67 cm" },
-      { sizeGuideId: guide.id, sizeLabel: "XXL", chest: "70 cm", waist: "68 cm", length: "80 cm", sleeve: "69 cm" },
-    ]);
   } else {
     hoodieGuideId = existingGuide[0].id;
+  }
+  const measurements = [
+      { sizeGuideId: hoodieGuideId, sizeLabel: "S", chest: "58 cm", waist: "56 cm", length: "70 cm", sleeve: "61 cm" },
+      { sizeGuideId: hoodieGuideId, sizeLabel: "M", chest: "61 cm", waist: "59 cm", length: "73 cm", sleeve: "63 cm" },
+      { sizeGuideId: hoodieGuideId, sizeLabel: "L", chest: "64 cm", waist: "62 cm", length: "76 cm", sleeve: "65 cm" },
+      { sizeGuideId: hoodieGuideId, sizeLabel: "XL", chest: "67 cm", waist: "65 cm", length: "78 cm", sleeve: "67 cm" },
+      { sizeGuideId: hoodieGuideId, sizeLabel: "XXL", chest: "70 cm", waist: "68 cm", length: "80 cm", sleeve: "69 cm" },
+  ];
+  for (const measurement of measurements) {
+    const [existing] = await db.select().from(sizeGuideMeasurements).where(and(
+      eq(sizeGuideMeasurements.sizeGuideId, hoodieGuideId),
+      eq(sizeGuideMeasurements.sizeLabel, measurement.sizeLabel),
+    )).limit(1);
+    if (!existing) await db.insert(sizeGuideMeasurements).values(measurement);
   }
   console.log("✓ Size Guides initialized");
 
@@ -389,8 +421,16 @@ export async function seedDatabase() {
         .returning();
       productId = inserted.id;
 
-      // Add Variants
-      for (const v of prodData.variants) {
+    } else {
+      productId = existing[0].id;
+    }
+    // Resume missing variants without changing inventory or prices.
+    for (const v of prodData.variants) {
+      const [existingVariant] = await db.select().from(productVariants).where(and(
+        eq(productVariants.productId, productId),
+        eq(productVariants.color, v.color), eq(productVariants.size, v.size),
+      )).limit(1);
+      if (!existingVariant) {
         await db.insert(productVariants).values({
           productId,
           sku: `${prodData.sku}-${v.color.replace(/\s+/g, "").toUpperCase()}-${v.size}`,
@@ -408,8 +448,7 @@ export async function seedDatabase() {
   console.log("✓ Products & Variants initialized");
 
   // 7. Storefront Sections (Default Homepage layout in DB)
-  const existingSections = await db.select().from(pageSections).where(eq(pageSections.version, "published")).limit(1);
-  if (existingSections.length === 0) {
+  {
     const defaultHomepageSections = [
       {
         sectionType: "announcement",
@@ -598,35 +637,19 @@ export async function seedDatabase() {
     ];
 
     for (const sec of defaultHomepageSections) {
-      await db.insert(pageSections).values({
-        pageId: null, // null for homepage
-        sectionType: sec.sectionType,
-        displayOrder: sec.displayOrder,
-        isVisible: sec.isVisible,
-        desktopVisible: sec.desktopVisible,
-        mobileVisible: sec.mobileVisible,
-        version: "published",
-        config: sec.config,
-      });
-
-      // Insert matching draft version for storefront builder start state
-      await db.insert(pageSections).values({
-        pageId: null,
-        sectionType: sec.sectionType,
-        displayOrder: sec.displayOrder,
-        isVisible: sec.isVisible,
-        desktopVisible: sec.desktopVisible,
-        mobileVisible: sec.mobileVisible,
-        version: "draft",
-        config: sec.config,
-      });
+      for (const version of ["published", "draft"]) {
+        const [existing] = await db.select().from(pageSections).where(and(
+          isNull(pageSections.pageId), eq(pageSections.version, version),
+          eq(pageSections.displayOrder, sec.displayOrder),
+        )).limit(1);
+        if (!existing) await db.insert(pageSections).values({ ...sec, pageId: null, version });
+      }
     }
   }
   console.log("✓ Page Sections initialized");
 
   // 8. Navigation Links
-  const existingNav = await db.select().from(navigation).limit(1);
-  if (existingNav.length === 0) {
+  {
     const defaultNav = [
       { location: "header", labelEn: "HOME", labelAr: "الرئيسية", labelFr: "ACCUEIL", url: "/", displayOrder: 1 },
       { location: "header", labelEn: "NEW DROP", labelAr: "التشكيلة الجديدة", labelFr: "NOUVEAUTÉS", url: "/shop?collection=new-drop", displayOrder: 2 },
@@ -640,26 +663,34 @@ export async function seedDatabase() {
       { location: "footer", labelEn: "Contact Us", labelAr: "اتصل بنا", labelFr: "Contactez-nous", url: "/pages/contact", displayOrder: 4 },
     ];
     for (const item of defaultNav) {
-      await db.insert(navigation).values(item);
+      const [existing] = await db.select().from(navigation).where(and(
+        eq(navigation.location, item.location), eq(navigation.url, item.url),
+      )).limit(1);
+      if (!existing) await db.insert(navigation).values(item);
     }
   }
   console.log("✓ Navigation initialized");
 
   // 9. Shipping Zones & Methods (Wilayas of Algeria)
-  const existingShipping = await db.select().from(shippingZones).limit(1);
-  if (existingShipping.length === 0) {
-    const [zoneAlgiers] = await db.insert(shippingZones).values({
+  {
+    async function ensureZone(data: typeof shippingZones.$inferInsert) {
+      const [existing] = await db.select().from(shippingZones).where(eq(shippingZones.name, data.name)).limit(1);
+      if (existing) return existing;
+      const [inserted] = await db.insert(shippingZones).values(data).returning();
+      return inserted;
+    }
+    const zoneAlgiers = await ensureZone({
       name: "Grand Alger & Centre",
       wilayas: ["16 - Alger", "09 - Blida", "42 - Tipaza", "35 - Boumerdès"],
-    }).returning();
+    });
 
-    const [zoneNational] = await db.insert(shippingZones).values({
+    const zoneNational = await ensureZone({
       name: "Autres Wilayas",
       wilayas: ["01 - Adrar", "02 - Chlef", "03 - Laghouat", "04 - Oum El Bouaghi", "05 - Batna", "06 - Béjaïa", "07 - Biskra", "08 - Béchar", "10 - Bouira", "11 - Tamanrasset", "12 - Tébessa", "13 - Tlemcen", "14 - Tiaret", "15 - Tizi Ouzou", "17 - Djelfa", "18 - Jijel", "19 - Sétif", "20 - Saïda", "21 - Skikda", "22 - Sidi Bel Abbès", "23 - Annaba", "24 - Guelma", "25 - Constantine", "26 - Médéa", "27 - Mostaganem", "28 - M'Sila", "29 - Mascara", "30 - Ouargla", "31 - Oran", "32 - El Bayadh", "33 - Illizi", "34 - Bordj Bou Arréridj", "36 - El Tarf", "37 - Tindouf", "38 - Tissemsilt", "39 - El Oued", "40 - Khenchela", "41 - Souk Ahras", "43 - Mila", "44 - Aïn Defla", "45 - Naâma", "46 - Aïn Témouchent", "47 - Ghardaïa", "48 - Relizane", "49 - Timimoun", "50 - Bordj Badji Mokhtar", "51 - Ouled Djellal", "52 - Béni Abbès", "53 - In Salah", "54 - In Guezzam", "55 - Touggourt", "56 - Djanet", "57 - El M'Ghair", "58 - El Meniaa"],
-    }).returning();
+    });
 
     // Shipping Methods
-    await db.insert(shippingMethods).values([
+    const methods = [
       {
         zoneId: zoneAlgiers.id,
         nameEn: "Home Delivery (Algiers Hub)",
@@ -690,7 +721,13 @@ export async function seedDatabase() {
         freeShippingThreshold: 15000,
         estDays: "2-3 Business Days",
       },
-    ]);
+    ];
+    for (const method of methods) {
+      const [existing] = await db.select().from(shippingMethods).where(and(
+        eq(shippingMethods.zoneId, method.zoneId), eq(shippingMethods.nameEn, method.nameEn),
+      )).limit(1);
+      if (!existing) await db.insert(shippingMethods).values(method);
+    }
   }
   console.log("✓ Shipping Zones & Methods initialized");
 

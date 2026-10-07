@@ -1,3 +1,4 @@
+import { ensureStorefrontReady, logDatabaseError } from "@/db/initialize";
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { products, productVariants } from "@/db/schema";
@@ -5,6 +6,7 @@ import { eq, desc } from "drizzle-orm";
 
 export async function GET() {
   try {
+    await ensureStorefrontReady();
     const allProducts = await db.select().from(products).orderBy(desc(products.createdAt));
     const allVariants = await db.select().from(productVariants);
 
@@ -14,13 +16,15 @@ export async function GET() {
     }));
 
     return NextResponse.json({ success: true, products: result });
-  } catch (error: any) {
-    return NextResponse.json({ success: false, error: error?.message }, { status: 500 });
+  } catch (error: unknown) {
+    logDatabaseError("admin/products request failed", error);
+    return NextResponse.json({ success: false, error: "Database request failed" }, { status: 500 });
   }
 }
 
 export async function POST(req: Request) {
   try {
+    await ensureStorefrontReady();
     const body = await req.json();
     const {
       nameEn,
@@ -96,7 +100,8 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ success: true, product: newProduct });
-  } catch (error: any) {
-    return NextResponse.json({ success: false, error: error?.message }, { status: 500 });
+  } catch (error: unknown) {
+    logDatabaseError("admin/products request failed", error);
+    return NextResponse.json({ success: false, error: "Database request failed" }, { status: 500 });
   }
 }
