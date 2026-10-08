@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { StorefrontSection } from "@/components/sections/StorefrontSection";
 import { Badge, Button, Card, Field, Input, Modal, Notice, PageHeader, Select, Spinner, adminFetch } from "@/components/admin/ui";
 import { MediaPicker } from "@/components/admin/MediaPicker";
+import { normalizeSection, type Section } from "@/lib/homepage-sections";
 import {
   ArrowDown,
   ArrowUp,
@@ -47,15 +48,6 @@ const PRODUCT_SOURCES = [
   { value: "best_sellers", label: "Best sellers" },
 ];
 
-interface Section {
-  id?: string;
-  sectionType: string;
-  isVisible: boolean;
-  desktopVisible: boolean;
-  mobileVisible: boolean;
-  config: Record<string, any>;
-}
-
 interface Revision {
   id: string;
   revisionName: string;
@@ -70,7 +62,18 @@ export function HomepageBuilder({
 }: {
   initialSections: Section[];
   initialRevisions: Revision[];
-  productsList: { id: string; nameEn: string; images: { url: string }[] }[];
+  productsList: {
+    id: string;
+    slug?: string;
+    nameEn: string;
+    nameAr?: string;
+    nameFr?: string;
+    sku?: string;
+    price?: number;
+    compareAtPrice?: number | null;
+    badge?: string | null;
+    images: { url: string; alt?: string; color?: string }[];
+  }[];
   categoriesList: any[];
 }) {
   const [sections, setSections] = useState<Section[]>(initialSections);
@@ -570,15 +573,4 @@ export function HomepageBuilder({
       />
     </div>
   );
-}
-
-export function normalizeSection(row: any): Section {
-  return {
-    id: row.id,
-    sectionType: row.sectionType,
-    isVisible: row.isVisible ?? true,
-    desktopVisible: row.desktopVisible ?? true,
-    mobileVisible: row.mobileVisible ?? true,
-    config: row.config ?? {},
-  };
 }

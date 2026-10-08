@@ -179,5 +179,6 @@ export function getTranslation(lang: Language, key: string): string {
 }
 
 export function formatDZD(amount: number): string {
-  return `${amount.toLocaleString("fr-DZ")} دج`;
+  const value = typeof amount === "number" && Number.isFinite(amount) ? amount : 0;
+  return `${value.toLocaleString("fr-DZ")} دج`;
 }

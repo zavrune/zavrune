@@ -4,7 +4,8 @@ import { categories, pageSections, products, storefrontRevisions } from "@/db/sc
 import { asc, desc, eq } from "drizzle-orm";
 import { ensureAdminReady } from "@/db/initialize";
 import { AdminPage } from "@/components/admin/AdminPage";
-import { HomepageBuilder, normalizeSection } from "@/components/admin/HomepageBuilder";
+import { HomepageBuilder } from "@/components/admin/HomepageBuilder";
+import { normalizeSection } from "@/lib/homepage-sections";
 
 export const dynamic = "force-dynamic";
 
@@ -33,8 +34,10 @@ async function HomepageBuilderData() {
       .orderBy(asc(pageSections.displayOrder));
   }
 
+  // Full product rows: the builder's live preview renders StorefrontSection,
+  // which spreads each entry into ProductCard (price, sku, slug, images, ...).
   const productsList = await db
-    .select({ id: products.id, nameEn: products.nameEn, images: products.images })
+    .select()
     .from(products)
     .orderBy(asc(products.position), desc(products.createdAt))
     .limit(300);
@@ -61,8 +64,17 @@ async function HomepageBuilderData() {
       }))}
       productsList={productsList.map((product) => ({
         id: product.id,
+        slug: product.slug,
         nameEn: product.nameEn,
-        images: Array.isArray(product.images) ? (product.images as { url: string }[]) : [],
+        nameAr: product.nameAr ?? undefined,
+        nameFr: product.nameFr ?? undefined,
+        sku: product.sku,
+        price: product.price,
+        compareAtPrice: product.compareAtPrice,
+        badge: product.badge ?? undefined,
+        images: Array.isArray(product.images)
+          ? (product.images as { url: string; alt?: string; color?: string }[])
+          : [],
       }))}
       categoriesList={categoriesList}
     />
