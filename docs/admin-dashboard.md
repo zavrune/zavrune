@@ -59,8 +59,12 @@ Passwords are never stored in plaintext: only the bcrypt hash is written to the
   per-method availability. Checkout prices are computed and re-validated on the
   server; each order stores a delivery snapshot so later rate changes never alter
   historical orders.
-- **Store settings / design / security / inventory / health / size guides** –
-  identity (name, logo, favicon), contact and social links, currency, free
+- **Size guides** – full editing (create, edit, delete) of guides and their
+  measurement tables (size, chest, waist, hip, length, sleeve, inseam) with an
+  optional category link. Deleting a guide clears the link on affected products
+  (they keep selling) and the change is recorded in the audit log.
+- **Store settings / design / security / inventory / health** – identity
+  (name, logo, favicon), contact and social links, currency, free
   shipping threshold, order and delivery settings, music, SEO, theme tokens,
   password management, session inventory, stock ledger and a storefront audit.
 
