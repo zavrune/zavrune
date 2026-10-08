@@ -1,9 +1,18 @@
 import { db } from "@/db";
 import { productGroupItems, productGroups, products, productVariants } from "@/db/schema";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import {
+  FEATURED_KEY,
+  NEW_DROP_KEY,
+  selectSectionProducts,
+  type SectionProductConfig,
+  type SectionProductContext,
+} from "./section-products";
 
-export const NEW_DROP_KEY = "new_drop";
-export const FEATURED_KEY = "featured";
+// The pure selection helpers stay dependency-free for client (builder preview)
+// use; they are re-exported here so existing server imports keep working.
+export { FEATURED_KEY, NEW_DROP_KEY, selectSectionProducts };
+export type { ProductSource, SectionProductConfig, SectionProductContext } from "./section-products";
 
 export interface ProductGroupRecord {
   id: string;
@@ -132,64 +141,26 @@ export async function getGroupForProduct(productId: string): Promise<string[]> {
   return rows.map((row) => row.groupKey);
 }
 
-export type ProductSource = "auto" | "manual" | "new_drop" | "featured" | "newest" | "best_sellers";
-
-export interface SectionProductConfig {
-  productSource?: ProductSource | string;
-  productIds?: string[];
-  limit?: number;
-  order?: "manual" | "newest" | "price_asc" | "price_desc";
-}
-
 /**
- * Resolves which products a homepage section shows. Manual selections preserve
- * the admin's exact order; the fallbacks keep the storefront populated.
+ * Server-side resolution: fills managed-group membership from the database when
+ * the caller did not provide it, then delegates to the pure selector.
  */
-export async function resolveSectionProducts(config: SectionProductConfig, allProducts: any[], limit = 8) {
-  const source = (config.productSource as string) || "auto";
-
-  if (source === "manual") {
-    const ids = Array.isArray(config.productIds) ? config.productIds.filter(Boolean) : [];
-    if (ids.length === 0) return [];
-    const byId = new Map(allProducts.map((product) => [product.id, product]));
-    return ids.map((id) => byId.get(id)).filter(Boolean).slice(0, limit);
+export async function resolveSectionProducts(
+  config: SectionProductConfig,
+  allProducts: any[],
+  limit = 8,
+  context: SectionProductContext = {}
+) {
+  const source = (config?.productSource as string) || "auto";
+  let groupProductIds = context.groupProductIds;
+  if (
+    !groupProductIds &&
+    (source === NEW_DROP_KEY || source === "new_drop" || source === FEATURED_KEY || source === "featured")
+  ) {
+    const [newDrop, featured] = await Promise.all([getGroupProductIds(NEW_DROP_KEY), getGroupProductIds(FEATURED_KEY)]);
+    groupProductIds = { new_drop: newDrop, featured };
   }
-
-  if (source === NEW_DROP_KEY || source === "new_drop") {
-    const items = await getGroupProductIds(NEW_DROP_KEY);
-    const published = items
-      .map((id) => allProducts.find((product) => product.id === id))
-      .filter(Boolean);
-    if (published.length > 0) return published.slice(0, limit);
-    return allProducts.slice(0, limit);
-  }
-
-  if (source === FEATURED_KEY || source === "featured") {
-    const items = await getGroupProductIds(FEATURED_KEY);
-    const published = items
-      .map((id) => allProducts.find((product) => product.id === id))
-      .filter(Boolean);
-    if (published.length > 0) return published.slice(0, limit);
-    const flagged = allProducts.filter((product) => product.featured);
-    return (flagged.length > 0 ? flagged : allProducts).slice(0, limit);
-  }
-
-  if (Array.isArray(config.productIds) && config.productIds.length > 0) {
-    const byId = new Map(allProducts.map((product) => [product.id, product]));
-    const selected = config.productIds
-      .map((id) => byId.get(id))
-      .filter(Boolean);
-    if (selected.length > 0) return selected.slice(0, limit);
-  }
-
-  if (config.order === "price_asc") {
-    return [...allProducts].sort((a, b) => a.price - b.price).slice(0, limit);
-  }
-  if (config.order === "price_desc") {
-    return [...allProducts].sort((a, b) => b.price - a.price).slice(0, limit);
-  }
-
-  return allProducts.slice(0, limit);
+  return selectSectionProducts(config, allProducts, limit, { ...context, groupProductIds });
 }
 
 /** Variants with their option values, grouped per product (storefront needs this). */

@@ -233,6 +233,20 @@ async function main() {
       180000
     );
 
+    // 5b. Homepage Builder: admin names, per-section content, ordering, visibility.
+    run(
+      "homepage builder checks",
+      process.execPath,
+      ["--import", "tsx", "tests/homepage-builder.ts"],
+      databaseEnvironment(DATABASES.app, {
+        TEST_BASE_URL: BASE_URL,
+        ZAVRUNE_ADMIN_EMAIL: ADMIN_EMAIL,
+        ZAVRUNE_ADMIN_PASSWORD: ADMIN_PASSWORD,
+      }),
+      180000
+    );
+    console.log("[db-tests] homepage builder names, content, ordering and visibility passed");
+
     // 6. Repeated and concurrent requests to / must stay 200 and identical.
     const bodies: string[] = [];
     for (let attempt = 0; attempt < 5; attempt += 1) {
