@@ -282,6 +282,9 @@ export const pageSections = pgTable("page_sections", {
   id: uuid("id").defaultRandom().primaryKey(),
   pageId: uuid("page_id").references(() => pages.id, { onDelete: "cascade" }), // null = homepage
   sectionType: text("section_type").notNull(), // 'hero', 'announcement', 'marquee', 'featured_collection', 'product_grid', 'product_carousel', 'new_arrivals', 'best_sellers', 'category_showcase', 'collection_showcase', 'lookbook', 'editorial_image', 'editorial_split', 'drop_announcement', 'sale_banner', 'brand_story', 'newsletter', 'social', 'cta', 'video', 'spacer', 'divider', 'footer'
+  // Editable admin-only section label shown inside the builder. It is never
+  // rendered on the storefront: public copy always comes from `config`.
+  name: text("name"),
   displayOrder: integer("display_order").default(0).notNull(),
   isVisible: boolean("is_visible").default(true).notNull(),
   desktopVisible: boolean("desktop_visible").default(true).notNull(),

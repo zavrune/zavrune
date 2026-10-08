@@ -463,6 +463,7 @@ async function seedOfficialData(db: SeedTransaction) {
     const defaultHomepageSections = [
       {
         sectionType: "announcement",
+        name: "Announcement Bar",
         displayOrder: 1,
         isVisible: true,
         desktopVisible: true,
@@ -478,6 +479,7 @@ async function seedOfficialData(db: SeedTransaction) {
       },
       {
         sectionType: "hero",
+        name: "Hero",
         displayOrder: 2,
         isVisible: true,
         desktopVisible: true,
@@ -509,6 +511,7 @@ async function seedOfficialData(db: SeedTransaction) {
       },
       {
         sectionType: "marquee",
+        name: "Marquee Ticker",
         displayOrder: 3,
         isVisible: true,
         desktopVisible: true,
@@ -522,6 +525,7 @@ async function seedOfficialData(db: SeedTransaction) {
       },
       {
         sectionType: "featured_collection",
+        name: "New Drop Arrivals",
         displayOrder: 4,
         isVisible: true,
         desktopVisible: true,
@@ -541,6 +545,7 @@ async function seedOfficialData(db: SeedTransaction) {
       },
       {
         sectionType: "category_showcase",
+        name: "Category Showcase",
         displayOrder: 5,
         isVisible: true,
         desktopVisible: true,
@@ -556,6 +561,7 @@ async function seedOfficialData(db: SeedTransaction) {
       },
       {
         sectionType: "drop_announcement",
+        name: "Drop Announcement",
         displayOrder: 6,
         isVisible: true,
         desktopVisible: true,
@@ -576,6 +582,7 @@ async function seedOfficialData(db: SeedTransaction) {
       },
       {
         sectionType: "product_grid",
+        name: "Best Sellers",
         displayOrder: 7,
         isVisible: true,
         desktopVisible: true,
@@ -594,6 +601,7 @@ async function seedOfficialData(db: SeedTransaction) {
       },
       {
         sectionType: "brand_story",
+        name: "Brand Story",
         displayOrder: 8,
         isVisible: true,
         desktopVisible: true,
@@ -613,6 +621,7 @@ async function seedOfficialData(db: SeedTransaction) {
       },
       {
         sectionType: "newsletter",
+        name: "Newsletter",
         displayOrder: 9,
         isVisible: true,
         desktopVisible: true,
@@ -631,6 +640,7 @@ async function seedOfficialData(db: SeedTransaction) {
       },
       {
         sectionType: "footer",
+        name: "Footer",
         displayOrder: 10,
         isVisible: true,
         desktopVisible: true,

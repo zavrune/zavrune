@@ -10,6 +10,8 @@ export const runtime = "nodejs";
 type Section = {
   pageId?: string | null;
   sectionType: string;
+  /** Admin-only label. Stored separately from `sectionType` and `config`. */
+  name?: string | null;
   isVisible?: boolean;
   desktopVisible?: boolean;
   mobileVisible?: boolean;
@@ -23,6 +25,7 @@ function normalizeSections(value: unknown): Section[] {
     .map((entry: any) => ({
       pageId: typeof entry.pageId === "string" ? entry.pageId : null,
       sectionType: String(entry.sectionType).slice(0, 60),
+      name: typeof entry.name === "string" && entry.name.trim() ? entry.name.trim().slice(0, 120) : null,
       isVisible: entry.isVisible ?? true,
       desktopVisible: entry.desktopVisible ?? true,
       mobileVisible: entry.mobileVisible ?? true,
@@ -78,6 +81,7 @@ export async function POST(req: Request) {
             sections.map((section, index) => ({
               pageId: section.pageId ?? null,
               sectionType: section.sectionType,
+              name: section.name ?? null,
               displayOrder: index + 1,
               isVisible: section.isVisible ?? true,
               desktopVisible: section.desktopVisible ?? true,
@@ -101,6 +105,7 @@ export async function POST(req: Request) {
             sections.map((section, index) => ({
               pageId: section.pageId ?? null,
               sectionType: section.sectionType,
+              name: section.name ?? null,
               displayOrder: index + 1,
               isVisible: section.isVisible ?? true,
               desktopVisible: section.desktopVisible ?? true,
@@ -145,6 +150,7 @@ export async function POST(req: Request) {
             revisionSections.map((section, index) => ({
               pageId: section.pageId ?? null,
               sectionType: section.sectionType,
+              name: section.name ?? null,
               displayOrder: index + 1,
               isVisible: section.isVisible ?? true,
               desktopVisible: section.desktopVisible ?? true,

@@ -1,11 +1,12 @@
 import React from "react";
 import { db } from "@/db";
-import { categories, pageSections, products, storefrontRevisions } from "@/db/schema";
+import { categories, collections, pageSections, products, storefrontRevisions } from "@/db/schema";
 import { asc, desc, eq } from "drizzle-orm";
 import { ensureAdminReady } from "@/db/initialize";
 import { AdminPage } from "@/components/admin/AdminPage";
 import { HomepageBuilder } from "@/components/admin/HomepageBuilder";
 import { normalizeSection } from "@/lib/homepage-sections";
+import { FEATURED_KEY, NEW_DROP_KEY, getGroupProductIds } from "@/lib/product-groups";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +44,11 @@ async function HomepageBuilderData() {
     .limit(300);
 
   const categoriesList = await db.select().from(categories).orderBy(asc(categories.displayOrder));
+  const collectionsList = await db.select().from(collections).orderBy(asc(collections.displayOrder));
+  const [newDropProductIds, featuredProductIds] = await Promise.all([
+    getGroupProductIds(NEW_DROP_KEY),
+    getGroupProductIds(FEATURED_KEY),
+  ]);
 
   const revisions = await db
     .select({
@@ -72,11 +78,28 @@ async function HomepageBuilderData() {
         price: product.price,
         compareAtPrice: product.compareAtPrice,
         badge: product.badge ?? undefined,
+        categoryId: product.categoryId,
+        collectionId: product.collectionId,
+        featured: product.featured,
+        createdAt: new Date(product.createdAt).toISOString(),
         images: Array.isArray(product.images)
           ? (product.images as { url: string; alt?: string; color?: string }[])
           : [],
       }))}
-      categoriesList={categoriesList}
+      categoriesList={categoriesList.map((category) => ({
+        id: category.id,
+        slug: category.slug,
+        nameEn: category.nameEn,
+        nameAr: category.nameAr,
+        nameFr: category.nameFr,
+        imageUrl: category.imageUrl,
+      }))}
+      collectionsList={collectionsList.map((collection) => ({
+        id: collection.id,
+        slug: collection.slug,
+        titleEn: collection.titleEn,
+      }))}
+      groupProductIds={{ new_drop: newDropProductIds, featured: featuredProductIds }}
     />
   );
 }

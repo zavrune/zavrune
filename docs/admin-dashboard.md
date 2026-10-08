@@ -47,6 +47,20 @@ Passwords are never stored in plaintext: only the bcrypt hash is written to the
 - **Categories, New Drop, Featured, Homepage** – managed collections with ordered
   product assignment, draft/publish, per-section visibility, ordering and
   rollback (rollback restores the newest saved revision).
+- **Homepage Builder** (`/mohamedbdr/homepage`) – real per-section editing. Every
+  section keeps three separate concepts: `section_type` (internal renderer),
+  `name` (editable admin label, shown only inside the builder) and `config`
+  (public storefront content). Admins can add, rename, duplicate, reorder,
+  enable/disable and delete sections, toggle desktop and mobile visibility
+  independently, and edit type-specific fields (hero heading/description/CTAs/
+  image/video/overlay/alignment/height, product source + selection + limit,
+  category showcase columns and selection, brand story, announcement, marquee,
+  newsletter, spacer). Raw JSON stays available as an optional power-user
+  editor; renaming a section never changes its type and an admin name is never
+  published. On phones the builder exposes a
+  `Sections | Preview | Edit` pane switcher. Sections created before the
+  `page_sections.name` column simply fall back to a human-readable type label
+  inside the admin UI.
 - **Orders** – search, status filters, per-status totals, detail view with
   immutable product/variant/delivery price snapshots, status transitions,
   internal notes, cancel + restock (idempotent through `orders.restocked_at`).
@@ -73,9 +87,18 @@ Passwords are never stored in plaintext: only the bcrypt hash is written to the
 ```bash
 npm run typecheck                 # tsc --noEmit
 npm run lint                      # eslint . (0 errors)
+npm test                          # unit tests incl. the section name/type model
 npx next build --webpack          # production build
+npm run test:db                   # disposable embedded Postgres end-to-end run
 node --test tests/migration-runner.cjs
 ```
+
+`npm run test:db` boots a disposable embedded PostgreSQL cluster, applies the
+additive migrations, starts the production build and verifies the storefront,
+admin authentication and the homepage builder
+(`tests/homepage-builder.ts`: create/rename/duplicate/reorder/delete, draft vs
+published, desktop/mobile visibility, public rendering of `config` copy and no
+leakage of admin names or generated legacy labels).
 
 Anonymous access can be re-checked against a running build:
 
