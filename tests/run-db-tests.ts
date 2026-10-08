@@ -8,7 +8,8 @@
  * Coverage: migration concurrency (bootstrap/occupied/partial/rollback modes),
  * build-time migration, a real `next start`, a fresh-store deployment, repeated
  * and concurrent storefront requests, admin login/password rotation, and the
- * additive-only guarantee for committed SQL.
+ * additive-only guarantee for committed SQL, a real pre-0002 schema with full
+ * builder coverage and late name backfill, and required-migration fail-closed.
  */
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
@@ -36,6 +37,8 @@ const DATABASES = {
   rollback: "zavrune_test_rollback",
   build: "zavrune_test_build",
   app: "zavrune_test_app",
+  pending: "zavrune_test_pending_0002",
+  requiredPending: "zavrune_test_pending_0001",
 } as const;
 
 const databaseUrl = (name: string) =>
@@ -145,7 +148,7 @@ async function stopApp(app: { child: ReturnType<typeof spawn> }) {
   await new Promise((resolve) => app.child.once("exit", resolve));
 }
 
-async function waitForHealth(app: ReturnType<typeof startApp>) {
+async function waitForHealth(app: ReturnType<typeof startApp>, expectedStatus = 200) {
   const deadline = Date.now() + 120000;
   let lastStatus = 0;
   while (Date.now() < deadline) {
@@ -153,13 +156,13 @@ async function waitForHealth(app: ReturnType<typeof startApp>) {
     try {
       const response = await fetch(`${BASE_URL}/api/health`);
       lastStatus = response.status;
-      if (response.status === 200) return;
+      if (response.status === expectedStatus) return;
     } catch {
       // still booting
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error(`/api/health never returned 200 (last status ${lastStatus}):\n${app.log()}`);
+  throw new Error(`/api/health never returned ${expectedStatus} (last status ${lastStatus}):\n${app.log()}`);
 }
 
 async function login(password: string) {
@@ -281,7 +284,36 @@ async function main() {
     assert.equal(rotated.status, 200, "the rotated password must work");
     console.log("[db-tests] admin password rotation and session revocation passed");
 
-    console.log("PASS: production-like database, migration, startup and admin checks");
+    // 8. A genuine pre-0002 database: only 0000 + 0001 are applied. No DROP,
+    // ledger edits or column removal. Serve the SAME production build on it.
+    await stopApp(app as { child: ReturnType<typeof spawn> });
+    const pendingEnv = databaseEnvironment(DATABASES.pending, {
+      TEST_BASE_URL: BASE_URL,
+      ZAVRUNE_ADMIN_EMAIL: ADMIN_EMAIL,
+      ZAVRUNE_ADMIN_PASSWORD: ADMIN_PASSWORD,
+    });
+    const optionalTest = ["--import", "tsx", "tests/optional-homepage-migration.ts"];
+    run("pre-0002 preparation", process.execPath, [...optionalTest, "prepare"], pendingEnv, 120000);
+    const pendingApp = startApp({ DATABASE_URL: databaseUrl(DATABASES.pending) });
+    app.child = pendingApp.child;
+    await waitForHealth(pendingApp);
+    run("pre-0002 fresh store", process.execPath, ["tests/admin-fresh-store.cjs"], pendingEnv, 180000);
+    const pendingBuilder = run("pre-0002 homepage builder", process.execPath, ["--import", "tsx", "tests/homepage-builder.ts"], pendingEnv, 180000);
+    console.log(pendingBuilder.stdout.trim());
+    const optionalChecks = run("pre-0002 HTTP and late migration", process.execPath, [...optionalTest, "verify"], pendingEnv, 180000);
+    console.log(optionalChecks.stdout.trim());
+    await stopApp(app as { child: ReturnType<typeof spawn> });
+
+    // 9. Optional means ONLY 0002: a missing required 0001 still fails closed.
+    const requiredEnv = databaseEnvironment(DATABASES.requiredPending, { TEST_BASE_URL: BASE_URL });
+    run("pre-0001 preparation", process.execPath, [...optionalTest, "prepare-required"], requiredEnv, 120000);
+    const requiredApp = startApp({ DATABASE_URL: databaseUrl(DATABASES.requiredPending) });
+    app.child = requiredApp.child;
+    await waitForHealth(requiredApp, 500);
+    const requiredChecks = run("required migrations fail closed", process.execPath, [...optionalTest, "verify-required"], requiredEnv, 180000);
+    console.log(requiredChecks.stdout.trim());
+
+    console.log("PASS: production-like database, migration, startup and admin checks (including optional 0002 and required fail-closed schemas)");
   } finally {
     if (app.child) await stopApp(app as { child: ReturnType<typeof spawn> });
     if (cluster) await cluster.stop();

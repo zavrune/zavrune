@@ -23,16 +23,29 @@ export interface Section {
   config: Record<string, any>;
 }
 
+/** The same bound is used by the API and the additive name backfill. */
+export function normalizeSectionName(value: unknown): string | null {
+  return typeof value === "string" ? value.trim().slice(0, 120) || null : null;
+}
+
+/**
+ * adminName is a storage-only compatibility mirror, never public copy. Return
+ * a new object so reads do not mutate existing JSON or revision snapshots.
+ */
+export function publicSectionConfig(value: unknown): Record<string, any> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter(([key]) => key !== "adminName"));
+}
+
 export function normalizeSection(row: any): Section {
-  const name = typeof row.name === "string" ? row.name.trim() : "";
   return {
     id: row.id,
     sectionType: row.sectionType,
-    name: name || null,
+    name: normalizeSectionName(row.name) ?? normalizeSectionName(row.config?.adminName),
     isVisible: row.isVisible ?? true,
     desktopVisible: row.desktopVisible ?? true,
     mobileVisible: row.mobileVisible ?? true,
-    config: row.config ?? {},
+    config: publicSectionConfig(row.config),
   };
 }
 
@@ -369,10 +382,15 @@ export function stripLegacyGeneratedLabels(config: Record<string, any>): Record<
   if (!config || typeof config !== "object" || Array.isArray(config)) return {};
   const cleaned: Record<string, any> = {};
   for (const [key, value] of Object.entries(config)) {
+    if (key === "adminName") continue;
     if (typeof value === "string") {
       cleaned[key] = isLegacyGeneratedLabel(value) ? "" : value;
     } else if (Array.isArray(value)) {
-      cleaned[key] = value.filter((entry) => !isLegacyGeneratedLabel(entry));
+      cleaned[key] = value.filter((entry) => !isLegacyGeneratedLabel(entry)).map((entry) =>
+        entry && typeof entry === "object" && !Array.isArray(entry)
+          ? stripLegacyGeneratedLabels(entry)
+          : entry
+      );
     } else if (value && typeof value === "object") {
       cleaned[key] = stripLegacyGeneratedLabels(value as Record<string, any>);
     } else {

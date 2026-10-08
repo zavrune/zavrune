@@ -1,6 +1,6 @@
 import { formatDatabaseError } from "./errors";
 import { pool } from "./index";
-import { isMigrationStateCurrent } from "./migration-state";
+import { getMigrationReadiness } from "./migration-state";
 
 const DATABASE_ERROR_PREFIX = "ZAVRUNE_DB_ERROR";
 
@@ -33,17 +33,22 @@ function initializationError(error: unknown): string {
 async function waitForDatabaseSchema(): Promise<void> {
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
-    if (await isMigrationStateCurrent(pool, Math.min(3000, deadline - Date.now()))) return;
+    const readiness = await getMigrationReadiness(pool, Math.min(3000, deadline - Date.now()));
+    // Only the exact optional additive migration may be pending. Required
+    // migrations still fail closed; section access handles the missing name.
+    if (readiness.ready) return;
     const remaining = deadline - Date.now();
     if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(250, remaining)));
   }
-  throw new Error("Committed migrations are not ready. Run npm run db:migrate with a direct database URL; schema readiness polling deadline exceeded.");
+  throw new Error("Required committed migrations are not ready. Run npm run db:migrate with a direct database URL; schema readiness polling deadline exceeded.");
 }
 
 /**
  * Read/poll only: the build/CLI owns DDL on a direct connection. Serverless
  * requests use the shared application pool and never enter a session lock or
- * migration path. Only successful readiness is memoized; failures can retry.
+ * migration path. Only required-schema readiness is memoized; failures can
+ * retry. Health/capability reads stay live so optional DDL is noticed without
+ * restarting a warm instance.
  */
 export async function ensureDatabaseSchema(): Promise<void> {
   const state = initializationState();

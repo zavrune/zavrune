@@ -1,5 +1,5 @@
 /**
- * Homepage Builder end-to-end checks against a running, migrated app.
+ * Homepage Builder end-to-end checks with AND without the optional name column.
  *
  * Requirements verified here:
  *   - /mohamedbdr/homepage answers HTTP 200 for an authenticated admin;
@@ -71,6 +71,10 @@ async function listSections(cookie: string, version: "draft" | "published" = "dr
   assert.equal(response.status, 200, `GET /api/admin/sections?version=${version}`);
   const payload = await response.json();
   assert.equal(payload.success, true);
+  for (const section of payload.sections) {
+    assert.match(section.createdAt, /^\d{4}-\d\d-\d\dT.*Z$/, "section timestamps must retain ISO API serialization");
+    assert.match(section.updatedAt, /^\d{4}-\d\d-\d\dT.*Z$/);
+  }
   return payload.sections as Section[];
 }
 
@@ -85,7 +89,28 @@ async function save(cookie: string, action: "save_draft" | "publish", sections: 
   assert.equal(response.status, 200, `${action} failed: ${JSON.stringify(payload)}`);
 }
 
+let hasNameColumn = false;
+async function storedSection(name: string) {
+  // Fixed SQL expressions only; the label stays a parameter. Both schemas run
+  // the same full builder workflow rather than a watered-down pending test.
+  const expression = hasNameColumn ? "name" : "config ->> 'adminName'";
+  return pool.query(
+    `select ${expression} as name, section_type, config, desktop_visible, mobile_visible
+     from page_sections where version = 'published' and ${expression} = $1`,
+    [name]
+  );
+}
+
 async function main() {
+  hasNameColumn = (await pool.query(
+    "select exists (select 1 from pg_attribute where attrelid = 'public.page_sections'::regclass and attname = 'name' and not attisdropped) as present"
+  )).rows[0].present;
+  const health = await fetch(new URL("/api/health", base));
+  assert.equal(health.status, 200);
+  const readiness = await health.json();
+  assert.equal(readiness.degraded, !hasNameColumn);
+  assert.deepEqual(readiness.pendingMigrations, hasNameColumn ? [] : ["0002_homepage_section_names"]);
+
   // 1. Only an authenticated admin reaches the builder; the page renders.
   const anonymous = await fetch(new URL("/mohamedbdr/homepage", base), { redirect: "manual" });
   assert([302, 303, 307, 308].includes(anonymous.status), "anonymous access must redirect to the login page");
@@ -110,6 +135,7 @@ async function main() {
   const draft = await listSections(cookie);
   assert.ok(draft.length >= 10, "the seeded storefront should have sections");
   for (const section of draft) {
+    assert.ok(!Object.hasOwn(section.config, "adminName"), "admin config must keep the name separate from public content");
     assert.equal(typeof section.sectionType, "string");
     assert.ok(section.sectionType.trim().length > 0);
     assert.notEqual(section.name, section.sectionType, `${section.sectionType} must not use its raw type as a name`);
@@ -173,7 +199,11 @@ async function main() {
     config: { height: 24 },
   };
 
-  const created = [...draft, hero, duplicateType, mobileOnly, desktopOnly, legacyLabelled];
+  const hidden: Section = {
+    sectionType: "hero", name: "Private Hidden Hero", isVisible: false,
+    desktopVisible: true, mobileVisible: true, config: { titleEn: "HIDDEN PUBLIC HEADING" },
+  };
+  const created = [...draft, hero, duplicateType, mobileOnly, desktopOnly, legacyLabelled, hidden];
   await save(cookie, "save_draft", created);
 
   let savedDraft = await listSections(cookie);
@@ -248,6 +278,7 @@ async function main() {
   await save(cookie, "publish", savedDraft);
 
   const published = await listSections(cookie, "published");
+  assert.ok(published.every((section) => !Object.hasOwn(section.config, "adminName")));
   const publishedGrid = published.find((section) => section.name === GRID_NAME);
   assert.ok(publishedGrid, "the published list must keep the admin name");
   assert.equal(publishedGrid.sectionType, "product_grid");
@@ -258,6 +289,9 @@ async function main() {
   assert.equal(homepage.status, 200);
   const html = await homepage.text();
 
+  assert.ok(!html.includes("adminName"), "storage-only metadata must not appear even in the public RSC payload");
+  assert.ok(!html.includes("HIDDEN PUBLIC HEADING"), "invisible sections must not be published to the browser");
+  assert.ok(!html.includes("Private Hidden Hero"));
   assert.ok(html.includes(PUBLIC_HEADING_V2), "the storefront must render the configured public heading");
   assert.ok(html.includes("SHOP NOW"), "the storefront must render the configured button text");
   for (const adminName of [ADMIN_NAME, DUPLICATE_NAME, GRID_NAME, "Winter Campaign Hero Renamed", "Winter Campaign Hero Copy"]) {
@@ -269,10 +303,7 @@ async function main() {
   assert.ok(html.includes("NEW DROP ARRIVALS"), "pre-existing storefront content must be preserved");
 
   // The stored legacy label stays in the database but never reaches customers.
-  const legacyRow = await pool.query(
-    "select name, section_type, config from page_sections where version = 'published' and name = $1",
-    ["Legacy Labelled Hero"]
-  );
+  const legacyRow = await storedSection("Legacy Labelled Hero");
   assert.equal(legacyRow.rows.length, 1);
   assert.equal(legacyRow.rows[0].config.titleEn, "NEW HERO", "legacy config data must be preserved");
 
@@ -283,30 +314,23 @@ async function main() {
   // Desktop/mobile visibility is enforced with breakpoint classes.
   assert.ok(html.includes("md:hidden"), "desktop-hidden sections must be hidden on desktop viewports");
   assert.ok(html.includes("hidden md:block"), "mobile-hidden sections must be hidden on phones");
-  const desktopOnlyRow = await pool.query(
-    "select name, section_type, desktop_visible, mobile_visible from page_sections where version = 'published' and name = $1",
-    ["Desktop Only Spacer"]
-  );
+  const desktopOnlyRow = await storedSection("Desktop Only Spacer");
   assert.equal(desktopOnlyRow.rows.length, 1);
   assert.equal(desktopOnlyRow.rows[0].desktop_visible, true);
   assert.equal(desktopOnlyRow.rows[0].mobile_visible, false);
 
   // 10. Database shape: name lives beside section_type and config.
-  const { rows } = await pool.query(
-    "select name, section_type, config, desktop_visible, mobile_visible from page_sections where version = 'published' and name = $1",
-    [GRID_NAME]
-  );
+  const { rows } = await storedSection(GRID_NAME);
   assert.equal(rows.length, 1, "the published row must exist exactly once");
   assert.equal(rows[0].name, GRID_NAME);
   assert.equal(rows[0].section_type, "product_grid");
   assert.equal(rows[0].config.titleEn, GRID_HEADING);
   assert.equal(rows[0].desktop_visible, false);
   assert.equal(rows[0].mobile_visible, true);
+  if (hasNameColumn) assert.ok(!Object.hasOwn(rows[0].config, "adminName"));
+  else assert.equal(rows[0].config.adminName, GRID_NAME, "pending names must be mirrored for later backfill");
 
-  const heroRow = await pool.query(
-    "select name, section_type, config from page_sections where version = 'published' and name = $1",
-    ["Winter Campaign Hero Renamed"]
-  );
+  const heroRow = await storedSection("Winter Campaign Hero Renamed");
   assert.equal(heroRow.rows.length, 1);
   assert.equal(heroRow.rows[0].section_type, "hero");
   assert.equal(heroRow.rows[0].config.titleEn, PUBLIC_HEADING_V2);
@@ -315,7 +339,38 @@ async function main() {
   const afterReload = await api("/mohamedbdr/homepage", cookie);
   assert.equal(afterReload.status, 200, "/mohamedbdr/homepage must stay 200 after edits");
 
-  console.log("PASS: homepage builder create/rename/duplicate/reorder/delete, visibility, publish and public rendering");
+  // Revisions retain names independently of JSON content in either schema.
+  const revisionList = await api("/api/admin/sections", cookie);
+  const firstRevision = (await revisionList.json()).revisions[0];
+  assert.ok(firstRevision?.id);
+  const shape = (sections: Section[]) => sections.map(({ sectionType, name, isVisible, desktopVisible, mobileVisible, config }) =>
+    ({ sectionType, name, isVisible, desktopVisible, mobileVisible, config })
+  );
+  const firstShape = shape(published);
+  const changed = published.map((section) => section.name === "Winter Campaign Hero Renamed"
+    ? { ...section, name: "Second Revision Hero", isVisible: false, config: { ...section.config, titleEn: "SECOND REVISION HEADING" } }
+    : section);
+  await save(cookie, "save_draft", changed);
+  await save(cookie, "publish", changed);
+  const secondShape = shape(await listSections(cookie, "published"));
+  const rollback = async (revisionId?: string) => {
+    const response = await api("/api/admin/sections", cookie, {
+      method: "POST", headers: sameOriginHeaders(), body: JSON.stringify({ action: "rollback", revisionId }),
+    });
+    assert.equal(response.status, 200, `rollback failed: ${await response.text()}`);
+  };
+  await rollback();
+  assert.deepEqual(shape(await listSections(cookie)), secondShape, "default rollback restores the newest revision, not the oldest");
+  await rollback(firstRevision.id);
+  assert.deepEqual(shape(await listSections(cookie)), firstShape, "selected revision restores the draft names, config, order and visibility");
+  assert.deepEqual(shape(await listSections(cookie, "published")), firstShape, "selected revision restores the live storefront atomically");
+  const restored = await fetch(new URL("/", base));
+  assert.equal(restored.status, 200);
+  const restoredHtml = await restored.text();
+  assert.ok(restoredHtml.includes(PUBLIC_HEADING_V2));
+  assert.ok(!restoredHtml.includes("adminName"));
+
+  console.log(`PASS: homepage builder create/rename/duplicate/reorder/delete, visibility, publish, revisions/rollback and public rendering (${hasNameColumn ? "migrated" : "0002 pending"})`);
 }
 
 main()

@@ -1,16 +1,18 @@
 import { db } from "@/db";
 import { pageSections, storefrontRevisions } from "@/db/schema";
-import { asc, desc, eq } from "drizzle-orm";
+import { insertPageSections, readPageSections, type PageSectionValues } from "@/db/page-sections";
+import { desc, eq } from "drizzle-orm";
 import { ensureAdminReady } from "@/db/initialize";
 import { jsonError, jsonOk, readJsonBody, withAdmin } from "@/lib/api";
 import { recordAdminAudit } from "@/lib/auth";
+import { normalizeSectionName, publicSectionConfig } from "@/lib/homepage-sections";
 
 export const runtime = "nodejs";
 
 type Section = {
   pageId?: string | null;
   sectionType: string;
-  /** Admin-only label. Stored separately from `sectionType` and `config`. */
+  /** Admin-only label, separate from renderer type and public config. */
   name?: string | null;
   isVisible?: boolean;
   desktopVisible?: boolean;
@@ -25,12 +27,22 @@ function normalizeSections(value: unknown): Section[] {
     .map((entry: any) => ({
       pageId: typeof entry.pageId === "string" ? entry.pageId : null,
       sectionType: String(entry.sectionType).slice(0, 60),
-      name: typeof entry.name === "string" && entry.name.trim() ? entry.name.trim().slice(0, 120) : null,
+      // New payloads own the name (including explicit clearing). Older revision
+      // snapshots may only have the compatibility mirror in their JSON.
+      name: normalizeSectionName(entry.name !== undefined ? entry.name : entry.config?.adminName),
       isVisible: entry.isVisible ?? true,
       desktopVisible: entry.desktopVisible ?? true,
       mobileVisible: entry.mobileVisible ?? true,
-      config: entry.config && typeof entry.config === "object" ? entry.config : {},
+      config: publicSectionConfig(entry.config),
     }));
+}
+
+function sectionRows(sections: Section[], version: "draft" | "published"): PageSectionValues[] {
+  return sections.map((section, index) => ({
+    ...section,
+    displayOrder: index + 1,
+    version,
+  }));
 }
 
 export async function GET(req: Request) {
@@ -40,11 +52,7 @@ export async function GET(req: Request) {
       await ensureAdminReady();
       const version = url.searchParams.get("version") === "published" ? "published" : "draft";
 
-      const sections = await db
-        .select()
-        .from(pageSections)
-        .where(eq(pageSections.version, version))
-        .orderBy(asc(pageSections.displayOrder));
+      const sections = await readPageSections(eq(pageSections.version, version));
 
       const revisions = await db
         .select({
@@ -77,19 +85,7 @@ export async function POST(req: Request) {
         // Atomic: the old draft is only replaced once the new one is written.
         await db.transaction(async (tx) => {
           await tx.delete(pageSections).where(eq(pageSections.version, "draft"));
-          await tx.insert(pageSections).values(
-            sections.map((section, index) => ({
-              pageId: section.pageId ?? null,
-              sectionType: section.sectionType,
-              name: section.name ?? null,
-              displayOrder: index + 1,
-              isVisible: section.isVisible ?? true,
-              desktopVisible: section.desktopVisible ?? true,
-              mobileVisible: section.mobileVisible ?? true,
-              version: "draft" as const,
-              config: section.config ?? {},
-            }))
-          );
+          await insertPageSections(sectionRows(sections, "draft"), tx);
         });
 
         await recordAdminAudit(session.admin, "admin.sections.draft_saved", { detail: { count: sections.length }, req });
@@ -101,19 +97,7 @@ export async function POST(req: Request) {
 
         await db.transaction(async (tx) => {
           await tx.delete(pageSections).where(eq(pageSections.version, "published"));
-          await tx.insert(pageSections).values(
-            sections.map((section, index) => ({
-              pageId: section.pageId ?? null,
-              sectionType: section.sectionType,
-              name: section.name ?? null,
-              displayOrder: index + 1,
-              isVisible: section.isVisible ?? true,
-              desktopVisible: section.desktopVisible ?? true,
-              mobileVisible: section.mobileVisible ?? true,
-              version: "published" as const,
-              config: section.config ?? {},
-            }))
-          );
+          await insertPageSections(sectionRows(sections, "published"), tx);
 
           await tx.insert(storefrontRevisions).values({
             revisionName: typeof body.revisionName === "string" && body.revisionName.trim()
@@ -145,22 +129,8 @@ export async function POST(req: Request) {
         await db.transaction(async (tx) => {
           await tx.delete(pageSections).where(eq(pageSections.version, "published"));
           await tx.delete(pageSections).where(eq(pageSections.version, "draft"));
-
-          const rows = (version: "published" | "draft") =>
-            revisionSections.map((section, index) => ({
-              pageId: section.pageId ?? null,
-              sectionType: section.sectionType,
-              name: section.name ?? null,
-              displayOrder: index + 1,
-              isVisible: section.isVisible ?? true,
-              desktopVisible: section.desktopVisible ?? true,
-              mobileVisible: section.mobileVisible ?? true,
-              version,
-              config: section.config ?? {},
-            }));
-
-          await tx.insert(pageSections).values(rows("published"));
-          await tx.insert(pageSections).values(rows("draft"));
+          await insertPageSections(sectionRows(revisionSections, "published"), tx);
+          await insertPageSections(sectionRows(revisionSections, "draft"), tx);
         });
 
         await recordAdminAudit(session.admin, "admin.sections.rolled_back", {

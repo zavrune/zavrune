@@ -1,4 +1,5 @@
 import { db } from "./index";
+import { insertPageSections } from "./page-sections";
 import {
   settings,
   categories,
@@ -659,11 +660,11 @@ async function seedOfficialData(db: SeedTransaction) {
 
     for (const sec of defaultHomepageSections) {
       for (const version of ["published", "draft"]) {
-        const [existing] = await db.select().from(pageSections).where(and(
+        const [existing] = await db.select({ id: pageSections.id }).from(pageSections).where(and(
           isNull(pageSections.pageId), eq(pageSections.version, version),
           eq(pageSections.displayOrder, sec.displayOrder),
         )).limit(1);
-        if (!existing) await db.insert(pageSections).values({ ...sec, pageId: null, version });
+        if (!existing) await insertPageSections([{ ...sec, pageId: null, version }], db);
       }
     }
   }

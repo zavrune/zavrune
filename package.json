@@ -13,7 +13,7 @@
     "test:bootstrap": "tsx tests/production-bootstrap.ts",
     "test:db": "tsx tests/run-db-tests.ts",
     "test:e2e": "node tests/server-startup.cjs",
-    "test": "node --import tsx --test tests/database-url.test.cjs tests/migration-state.test.cjs tests/migration-runner.test.cjs tests/db-module.test.cjs tests/instrumentation.test.cjs tests/homepage-sections.test.ts"
+    "test": "node --import tsx --test tests/database-url.test.cjs tests/migration-state.test.cjs tests/migration-runner.test.cjs tests/db-module.test.cjs tests/instrumentation.test.cjs tests/homepage-sections.test.ts tests/page-sections.test.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

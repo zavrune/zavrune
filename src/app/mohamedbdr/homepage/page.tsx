@@ -1,6 +1,7 @@
 import React from "react";
 import { db } from "@/db";
 import { categories, collections, pageSections, products, storefrontRevisions } from "@/db/schema";
+import { readPageSections } from "@/db/page-sections";
 import { asc, desc, eq } from "drizzle-orm";
 import { ensureAdminReady } from "@/db/initialize";
 import { AdminPage } from "@/components/admin/AdminPage";
@@ -21,18 +22,10 @@ export default async function AdminHomepagePage() {
 async function HomepageBuilderData() {
   await ensureAdminReady();
 
-  let draft = await db
-    .select()
-    .from(pageSections)
-    .where(eq(pageSections.version, "draft"))
-    .orderBy(asc(pageSections.displayOrder));
+  let draft = await readPageSections(eq(pageSections.version, "draft"));
 
   if (draft.length === 0) {
-    draft = await db
-      .select()
-      .from(pageSections)
-      .where(eq(pageSections.version, "published"))
-      .orderBy(asc(pageSections.displayOrder));
+    draft = await readPageSections(eq(pageSections.version, "published"));
   }
 
   // Full product rows: the builder's live preview renders StorefrontSection,
