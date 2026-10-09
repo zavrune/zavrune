@@ -59,8 +59,11 @@ Passwords are never stored in plaintext: only the bcrypt hash is written to the
   editor; renaming a section never changes its type and an admin name is never
   published. On phones the builder exposes a
   `Sections | Preview | Edit` pane switcher. Sections created before the
-  `page_sections.name` column simply fall back to a human-readable type label
-  inside the admin UI.
+  `page_sections.name` column can still be renamed/saved/published while migration
+  0002 is pending: the admin label temporarily lives in a storage-only
+  `config.adminName` mirror, never in the public payload. The additive migration
+  promotes those labels into `name` when it commits. Rows without any custom
+  label still fall back to a human-readable type label inside the admin UI.
 - **Orders** – search, status filters, per-status totals, detail view with
   immutable product/variant/delivery price snapshots, status transitions,
   internal notes, cancel + restock (idempotent through `orders.restocked_at`).
@@ -88,9 +91,9 @@ Passwords are never stored in plaintext: only the bcrypt hash is written to the
 npm run typecheck                 # tsc --noEmit
 npm run lint                      # eslint . (0 errors)
 npm test                          # unit tests incl. the section name/type model
-npx next build --webpack          # production build
+npm run build                    # build-time migration + production build
 npm run test:db                   # disposable embedded Postgres end-to-end run
-node --test tests/migration-runner.cjs
+node --test tests/migration-runner.test.cjs
 ```
 
 `npm run test:db` boots a disposable embedded PostgreSQL cluster, applies the
@@ -98,7 +101,11 @@ additive migrations, starts the production build and verifies the storefront,
 admin authentication and the homepage builder
 (`tests/homepage-builder.ts`: create/rename/duplicate/reorder/delete, draft vs
 published, desktop/mobile visibility, public rendering of `config` copy and no
-leakage of admin names or generated legacy labels).
+leakage of admin names or generated legacy labels). The same full workflow,
+including revisions/rollback, also runs on a genuine schema with migration 0002
+still pending. `tests/optional-homepage-migration.ts` verifies degraded health,
+late migration/backfill without changing any existing public-table data, native
+name writes on the same warm server, and fail-closed required migrations.
 
 Anonymous access can be re-checked against a running build:
 

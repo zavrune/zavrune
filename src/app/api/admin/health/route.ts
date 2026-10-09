@@ -1,5 +1,6 @@
 import { ensureStorefrontReady, logDatabaseError } from "@/db/initialize";
 import { db } from "@/db";
+import { readPageSections } from "@/db/page-sections";
 import { products, categories, pageSections } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { jsonOk, jsonServerError, withAdmin } from "@/lib/api";
@@ -87,7 +88,7 @@ export async function GET(req: Request) {
     }
 
     // 3. Scan Storefront Builder Sections
-    const publishedSections = await db.select().from(pageSections).where(eq(pageSections.version, "published"));
+    const publishedSections = await readPageSections(eq(pageSections.version, "published"));
     if (publishedSections.length === 0) {
       issues.push({
         id: "sections_empty",

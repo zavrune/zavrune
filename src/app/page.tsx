@@ -1,6 +1,7 @@
 import { db } from "@/db";
 import { ensureStorefrontReady, storefrontQuery } from "@/db/initialize";
 import { pageSections, products, categories, collections, navigation } from "@/db/schema";
+import { readPageSections } from "@/db/page-sections";
 import {
   FEATURED_KEY,
   NEW_DROP_KEY,
@@ -30,15 +31,13 @@ function sectionVisibilityClass(section: { desktopVisible: boolean; mobileVisibl
 }
 
 export default async function HomePage() {
-  // This route must not issue a storefront query until the additive schema is ready.
+  // Required schema first; the optional admin-name column may still be pending.
   await ensureStorefrontReady();
 
   // Fetch published sections for homepage
-  const sections = await storefrontQuery(db
-    .select()
-    .from(pageSections)
-    .where(and(isNull(pageSections.pageId), eq(pageSections.version, "published")))
-    .orderBy(asc(pageSections.displayOrder)));
+  const sections = await storefrontQuery(readPageSections(
+    and(isNull(pageSections.pageId), eq(pageSections.version, "published"))
+  ));
 
   // Fetch products and categories for sections
   const productsList = await storefrontQuery(db

@@ -21,9 +21,11 @@ DDL, so a request can never be queued behind another instance's migration lock.
   Pool, clock, state reader and DDL executor are injectable for tests.
 - `src/db/initialize.ts` (request readiness) only performs two cheap reads
   (`to_regclass('drizzle.__drizzle_migrations')` and the newest `created_at`) on
-  the shared application pool, memoizes success per process, single-flights the
-  check, and polls with a bounded deadline while a deployment commits migrations.
-  Failure messages are redacted `ZAVRUNE_DB_ERROR`s and can be retried.
+  the shared application pool, memoizes required-schema readiness per process,
+  single-flights the check, and polls with a bounded deadline for required DDL.
+  Only `0002_homepage_section_names` is optional at runtime (see below); every
+  other migration, including future entries, still fails closed. Failure messages
+  are redacted `ZAVRUNE_DB_ERROR`s and can be retried.
 - `src/db/index.ts` builds one Vercel-safe pool per process lazily
   (`max=3`, `min=0`, 5s connect timeout, 10s idle timeout, 30s query timeout,
   5s lock timeout, bounded connection lifetime/use, keep-alive). Drizzle is
@@ -72,6 +74,50 @@ Once the completion marker exists, automatic and explicit seed runs are no-ops,
 including if an owner subsequently removes starter content. `GET /api/seed` is
 read-only and does not even initialize the schema.
 
+## Optional homepage section-name migration
+
+A deployment may serve traffic before `0002_homepage_section_names` commits.
+This **exact migration only** is additive and optional for request readiness:
+`0000_init_schema`, `0001_admin_dashboard` and every other/future migration remain
+required. The build/CLI check is deliberately strict and still applies **all**
+committed migrations. Use `npm run db:migrate` with the configured direct URL to
+complete a pending deployment; no request or instrumentation hook runs DDL.
+
+`src/db/page-sections.ts` checks the actual `page_sections.name` capability using
+`pg_attribute` on the caller's connection. Reads use explicit SQL projections
+and substitute `NULL` instead of referencing a missing column. Seed, draft,
+publish and rollback inserts use explicit parameterized SQL columns rather than
+Drizzle's table INSERT builder (which includes `name` even when omitted).
+Existing transactions preserve atomicity and coordinate with concurrent ALTER.
+
+While the column is absent, the admin name is mirrored into `config.adminName`.
+Admin reads recover it as the separate `name` field; the storage-only key is
+removed from returned config and from the public rendering/RSC payload. Public
+copy, type, ordering, visibility and per-type editors remain independent. Older
+revision snapshots containing only the mirror can also be restored.
+
+The unchanged additive 0002 adds a nullable column and backfills existing mirrors
+into `name`. It does not remove rows, overwrite public config or touch unrelated
+data. Capability checks do not cache absence, so the same warm instance starts
+using the native name column after the migration commits. Native writes no longer
+need the JSON mirror; existing JSON values are left intact by the migration.
+
+`GET /api/health` probes live migration state, including on warm instances. While
+only 0002 is pending, it returns **HTTP 200** with:
+
+```json
+{
+  "ok": true,
+  "databaseInitialized": true,
+  "degraded": true,
+  "pendingMigrations": ["0002_homepage_section_names"]
+}
+```
+
+Once migration 0002 commits, `degraded` becomes `false` and `pendingMigrations`
+is empty without a restart. Missing required migrations or database failures
+still return HTTP 500 with a redacted diagnostic.
+
 ## Admin authentication
 
 Seed POST requires an unexpired authenticated session with role `admin`; browser
@@ -94,7 +140,13 @@ rows. Existing admins must sign in again. No demo credentials are provisioned.
   build-time migration, `npm run db:migrate` twice (second is a cheap no-op), a
   real `next start` on a migrated-but-unseeded database, fresh-store admin login
   and provisioning, storefront smoke, repeated/concurrent `/` requests, and admin
-  password rotation with session revocation.
+  password rotation with session revocation. It also starts the same build on a
+  genuine pre-0002 schema (only 0000/0001 applied), repeats the entire homepage
+  builder workflow, verifies HTTP 200 for `/`, authenticated
+  `/mohamedbdr/homepage`, section update/publish and degraded `/api/health`, then
+  applies 0002 while the server stays warm and checks name backfill plus exact
+  preservation of every existing public-table row. A separate pre-0001 database
+  confirms that required migrations still fail closed.
 - `npm run test:e2e` - `next start` with no database configured at all: unrelated
   routes keep serving, database-backed ones fail closed, and the process survives.
 - `npm run test:bootstrap -- bootstrap|partial|occupied|rollback` (included in

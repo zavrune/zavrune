@@ -35,7 +35,8 @@ test("the instrumentation hook never imports the migration runner", () => {
 test("request readiness reads/polls migration state and owns no DDL", () => {
   const initialize = source("src/db/initialize.ts");
   assert.doesNotMatch(initialize, /applyPendingMigrations|migrate-runner|pg_advisory_lock/);
-  assert.match(initialize, /isMigrationStateCurrent/);
+  assert.match(initialize, /getMigrationReadiness/);
+  assert.match(initialize, /if \(readiness\.ready\) return/, "requests gate required readiness, not optional DDL completion");
   assert.match(initialize, /await import\(|from "\.\/index"/);
 });
 

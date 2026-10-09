@@ -10,7 +10,7 @@ const {
   deriveDirectNeonUrl,
   formatDatabaseError,
 } = require("../src/db/migrate-runner.cjs");
-const { REQUIRED_MIGRATION_TIMESTAMP } = require("../src/db/migration-state.cjs");
+const { LATEST_MIGRATION_TIMESTAMP } = require("../src/db/migration-state.cjs");
 
 const textOf = (config) => (typeof config === "string" ? config : config.text);
 const BLOCKING_LOCK = /(?:^|[^_a-zA-Z])pg_advisory_lock\s*\(/;
@@ -18,7 +18,7 @@ const TRY_LOCK = /pg_try_advisory_lock/;
 // Mirrors the runner guard: dropping a NOT NULL constraint and FK ON DELETE behaviour are additive.
 const DESTRUCTIVE_SQL = /\b(drop\s+(table|schema|index|constraint|column)|truncate\b|delete\s+from)\b/i;
 const UPDATED = { migration_table: "drizzle.__drizzle_migrations" };
-const CURRENT_ROWS = [{ created_at: String(REQUIRED_MIGRATION_TIMESTAMP + 1000) }];
+const CURRENT_ROWS = [{ created_at: String(LATEST_MIGRATION_TIMESTAMP + 1000) }];
 
 test("migrations prefer explicit direct URLs without changing the query URL", () => {
   const environment = {
